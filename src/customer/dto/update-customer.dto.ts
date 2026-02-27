@@ -10,6 +10,7 @@ import {
   LinkageType,
   CustomerStatus,
   Gender,
+  DocumentType,
 } from 'src/common/enums/customer.enums';
 
 export class UpdateCustomerDto {
@@ -32,7 +33,8 @@ export class UpdateCustomerDto {
   status?: CustomerStatus;
 
   @IsOptional()
-  documentType?: string;
+  @IsEnum(DocumentType)
+  documentType?: DocumentType;
 
   @IsOptional()
   documentId?: string;

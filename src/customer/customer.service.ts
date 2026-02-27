@@ -71,6 +71,10 @@ export class CustomerService {
     return this.customerRepository.save(existing);
   }
 
+  async updateStatus(customer: Customer) {
+    return this.customerRepository.save(customer);
+  }
+
   async findOne(uuid: string, participantId: string): Promise<Customer> {
     const customer = await this.customerRepository.findOne({
       where: { uuid, participantId },
@@ -81,6 +85,12 @@ export class CustomerService {
     }
 
     return customer;
+  }
+
+  async findAll(participantId: string): Promise<Customer[]> {
+    return await this.customerRepository.find({
+      where: { participantId },
+    });
   }
 
   async remove(uuid: string, participantId: string): Promise<void> {

@@ -11,6 +11,7 @@ import {
   CustomerType,
   LinkageType,
   Gender,
+  DocumentType,
 } from 'src/common/enums/customer.enums';
 
 export class CreateCustomerDto {
@@ -25,8 +26,8 @@ export class CreateCustomerDto {
   @IsEnum(LinkageType)
   linkageType: LinkageType;
 
-  @IsNotEmpty()
-  documentType: string;
+  @IsEnum(DocumentType)
+  documentType: DocumentType;
 
   @IsNotEmpty()
   documentId: string;

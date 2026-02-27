@@ -37,6 +37,11 @@ export class CustomerController {
     return this.customerService.findOne(uuid, participantId);
   }
 
+  @Get()
+  async getAll(@Participant() participantId: string): Promise<Customer[]> {
+    return this.customerService.findAll(participantId);
+  }
+
   @Put(':uuid')
   async updateCustomer(
     @Param('uuid') uuid: string,

@@ -3,6 +3,7 @@ import {
   LinkageType,
   CustomerStatus,
   Gender,
+  DocumentType,
 } from 'src/common/enums/customer.enums';
 import {
   Entity,
@@ -37,8 +38,12 @@ export class Customer {
   })
   status: CustomerStatus;
 
-  @Column()
-  documentType: string;
+  @Column({
+    type: 'enum',
+    enum: DocumentType,
+    default: DocumentType.NATIONAL_ID,
+  })
+  documentType: DocumentType;
 
   @Column()
   documentId: string;
@@ -52,7 +57,7 @@ export class Customer {
   @Column({ nullable: true })
   msisdnIsOwned?: boolean;
 
-  // INDIVIDUAL-only
+  // INDIVIDUAL-only============================
   @Column({ nullable: true })
   firstName?: string;
 
@@ -71,7 +76,7 @@ export class Customer {
   @Column({ nullable: true })
   secondEmail?: string;
 
-  // COMPANY-only
+  // COMPANY-only==============================
   @Column({ nullable: true })
   companyName?: string;
 

@@ -1,0 +1,14 @@
+// AliasType // FREE_FORMAT, EMAIL_ADDRESS, MSISDN, NATIONAL_ID
+// AliasStatus // ACTIVE, INACTIVE
+
+export enum AliasType {
+  FREE_FORMAT = 'FREE_FORMAT',
+  EMAIL_ADDRESS = 'EMAIL_ADDRESS',
+  MSISDN = 'MSISDN',
+  NATIONAL_ID = 'NATIONAL_ID',
+}
+
+export enum AliasStatus {
+  ACTIVE = 'ACTIVE',
+  INACTIVE = 'INACTIVE',
+}
