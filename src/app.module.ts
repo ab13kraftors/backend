@@ -8,20 +8,44 @@ import { CustomerModule } from './customer/customer.module';
 import { OtpModule } from './otp/otp.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AliasModule } from './alias/alias.module';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { AuthModule } from './auth/auth.module';
+import { EncryptionInterceptor } from './common/interceptors/encryption.interceptor';
+import { AesService } from './common/crypto/aes.service';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
+      // envFilePath: '.env',
     }),
+    ThrottlerModule.forRoot([
+      {
+        ttl: 3600000,
+        limit: 20,
+        // in 1 hr only 20 requests per ip
+      },
+    ]),
     TypeOrmModule.forRoot(databaseConfig),
     ScheduleModule.forRoot(),
     CustomerModule,
     OtpModule,
     AliasModule,
+    AuthModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AesService,
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: EncryptionInterceptor,
+    },
+  ],
 })
 export class AppModule {}

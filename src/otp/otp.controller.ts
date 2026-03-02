@@ -9,8 +9,9 @@ import {
 import { OtpService } from './otp.service';
 import { ParticipantGuard } from 'src/common/guards/participant/participant.guard';
 import { Participant } from 'src/common/decorators/participant/participant.decorator';
+import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 
-@UseGuards(ParticipantGuard)
+@UseGuards(JwtAuthGuard, ParticipantGuard)
 @Controller('api/fp/cas/v2/customer')
 export class OtpController {
   constructor(private readonly otpService: OtpService) {}

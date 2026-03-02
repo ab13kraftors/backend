@@ -15,8 +15,9 @@ import { Customer } from './entities/customer.entity';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { Participant } from 'src/common/decorators/participant/participant.decorator';
 import { ParticipantGuard } from 'src/common/guards/participant/participant.guard';
+import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 
-@UseGuards(ParticipantGuard)
+@UseGuards(JwtAuthGuard, ParticipantGuard)
 @Controller('api/fp/cas/v2/customer')
 export class CustomerController {
   constructor(private readonly customerService: CustomerService) {}
