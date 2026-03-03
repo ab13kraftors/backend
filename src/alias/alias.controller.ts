@@ -6,17 +6,20 @@ import {
   Get,
   Delete,
   Put,
+  UseGuards,
 } from '@nestjs/common';
 import { AliasService } from './alias.service';
 import { Participant } from 'src/common/decorators/participant/participant.decorator';
 import { CreateAliasDto } from './entities/dto/create-alias.dto';
 import { UpdateAliasDto } from './entities/dto/update-create.dto';
+import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 
-@Controller('alias')
+@UseGuards(JwtAuthGuard)
+@Controller('api/fp/cas/v2/customer')
 export class AliasController {
   constructor(private readonly aliasService: AliasService) {}
 
-  @Post(':uuid/aliases')
+  @Post(':ccuuid/aliases')
   create(
     @Participant() participantId: string,
     @Param('ccuuid') ccuuid: string,
@@ -25,7 +28,7 @@ export class AliasController {
     return this.aliasService.create(participantId, ccuuid, dto);
   }
 
-  @Get(':uuid/aliases')
+  @Get(':ccuuid/aliases')
   findAll(
     @Participant() participantId: string,
     @Param('ccuuid') ccuuid: string,
@@ -33,7 +36,7 @@ export class AliasController {
     return this.aliasService.findAll(participantId, ccuuid);
   }
 
-  @Put(':uuid/aliases/:aliasUuid')
+  @Put(':ccuuid/aliases/:aliasUuid')
   update(
     @Participant() participantId: string,
     @Param('ccuuid') ccuuid: string,
@@ -43,7 +46,7 @@ export class AliasController {
     return this.aliasService.update(participantId, ccuuid, aliasUuid, dto);
   }
 
-  @Delete(':uuid/aliases/:aliasUuid')
+  @Delete(':ccuuid/aliases/:aliasUuid')
   remove(
     @Participant() participantId: string,
     @Param('ccuuid') ccuuid: string,

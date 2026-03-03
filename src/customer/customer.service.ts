@@ -10,10 +10,17 @@ import { Repository } from 'typeorm';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CustomerStatus, CustomerType } from 'src/common/enums/customer.enums';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
+//---One Step Registration---
+import { DataSource } from 'typeorm';
+import { Alias } from 'src/alias/entities/alias.entity';
+import { FinAddress } from 'src/finaddress/entities/finaddress.entity';
+import { OneStepRegistrationDto } from './dto/one-step-registration.dto';
+// ---One Step Registration---
 
 @Injectable()
 export class CustomerService {
   constructor(
+    private readonly dataSource: DataSource,
     @InjectRepository(Customer)
     private customerRepository: Repository<Customer>,
   ) {}
@@ -141,5 +148,42 @@ export class CustomerService {
         'Personal fields are not allowed for COMPANY customer',
       );
     }
+  }
+
+  async oneStep(participantId: string, dto: OneStepRegistrationDto) {
+    return this.dataSource.transaction(async (manager) => {
+      // Create Customer
+      const customer = manager.create(Customer, {
+        ...dto.customer,
+        participantId,
+      });
+
+      const savedCustomer = await manager.save(customer);
+
+      // Create Alias
+      const alias = manager.create(Alias, {
+        ...dto.alias,
+        participantId,
+        ccuuid: savedCustomer.uuid,
+      });
+
+      await manager.save(alias);
+
+      // Create Financial Address
+      const fin = manager.create(FinAddress, {
+        ...dto.finAddress,
+        participantId,
+        ccuuid: savedCustomer.uuid,
+        isDefault: true,
+      });
+
+      await manager.save(fin);
+
+      return {
+        customer: savedCustomer,
+        alias,
+        finaddress: fin,
+      };
+    });
   }
 }

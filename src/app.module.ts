@@ -13,6 +13,7 @@ import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AuthModule } from './auth/auth.module';
 import { EncryptionInterceptor } from './common/interceptors/encryption.interceptor';
 import { AesService } from './common/crypto/aes.service';
+import { FinaddressModule } from './finaddress/finaddress.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { AesService } from './common/crypto/aes.service';
     OtpModule,
     AliasModule,
     AuthModule,
+    FinaddressModule,
   ],
   controllers: [AppController],
   providers: [

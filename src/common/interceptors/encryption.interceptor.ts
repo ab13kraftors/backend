@@ -15,6 +15,9 @@ export class EncryptionInterceptor implements NestInterceptor {
   constructor(private readonly aes: AesService) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    if (process.env.NODE_ENV !== 'production') {
+      return next.handle();
+    }
     const req = context.switchToHttp().getRequest<Request>();
     if (
       req.body &&

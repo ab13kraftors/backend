@@ -16,6 +16,7 @@ import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { Participant } from 'src/common/decorators/participant/participant.decorator';
 import { ParticipantGuard } from 'src/common/guards/participant/participant.guard';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { OneStepRegistrationDto } from './dto/one-step-registration.dto';
 
 @UseGuards(JwtAuthGuard, ParticipantGuard)
 @Controller('api/fp/cas/v2/customer')
@@ -58,5 +59,13 @@ export class CustomerController {
     @Participant() participantId: string,
   ): Promise<void> {
     return this.customerService.remove(uuid, participantId);
+  }
+
+  @Post('one-step')
+  async oneStep(
+    @Participant() participantId: string,
+    @Body() dto: OneStepRegistrationDto,
+  ) {
+    return this.customerService.oneStep(participantId, dto);
   }
 }
