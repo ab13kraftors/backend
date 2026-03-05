@@ -11,12 +11,21 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  OneToMany,
 } from 'typeorm';
+import { Alias } from 'src/alias/entities/alias.entity';
+import { FinAddress } from 'src/finaddress/entities/finaddress.entity';
 
 @Entity('customers')
 export class Customer {
   @PrimaryGeneratedColumn('uuid')
   uuid: string;
+
+  @OneToMany(() => Alias, (alias) => alias.customer)
+  aliases: Alias[];
+
+  @OneToMany(() => FinAddress, (finAddress) => finAddress.customer)
+  finAddresses: FinAddress[];
 
   // One company id share by multiple customers
   @Column()

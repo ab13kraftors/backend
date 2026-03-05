@@ -6,7 +6,10 @@ import {
   PrimaryGeneratedColumn,
   Unique,
   UpdateDateColumn,
+  ManyToOne,
+  JoinColumn,
 } from 'typeorm';
+import { Customer } from 'src/customer/entities/customer.entity';
 
 @Entity()
 @Unique(['participantId', 'finAddress']) // prevents duplicate
@@ -16,6 +19,13 @@ export class FinAddress {
 
   @Column()
   participantId: string;
+
+  @ManyToOne(() => Customer, (customer) => customer.finAddresses, {
+    onDelete: 'CASCADE',
+    nullable: false, // Cannot create without a customer
+  })
+  @JoinColumn({ name: 'ccuuid', referencedColumnName: 'uuid' })
+  customer: Customer;
 
   @Column()
   ccuuid: string;

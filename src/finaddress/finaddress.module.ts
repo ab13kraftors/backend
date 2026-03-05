@@ -4,9 +4,10 @@ import { FinaddressController } from './finaddress.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { FinAddress } from './entities/finaddress.entity';
 import { CustomerModule } from 'src/customer/customer.module';
+import { Alias } from 'src/alias/entities/alias.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([FinAddress]), CustomerModule],
+  imports: [TypeOrmModule.forFeature([FinAddress, Alias]), CustomerModule],
   providers: [FinaddressService],
   controllers: [FinaddressController],
 })

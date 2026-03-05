@@ -14,6 +14,8 @@ import { AuthModule } from './auth/auth.module';
 import { EncryptionInterceptor } from './common/interceptors/encryption.interceptor';
 import { AesService } from './common/crypto/aes.service';
 import { FinaddressModule } from './finaddress/finaddress.module';
+import { PaymentsModule } from './payments/payments.module';
+import { CasModule } from './cas/cas.module';
 
 @Module({
   imports: [
@@ -35,6 +37,8 @@ import { FinaddressModule } from './finaddress/finaddress.module';
     AliasModule,
     AuthModule,
     FinaddressModule,
+    PaymentsModule,
+    CasModule,
   ],
   controllers: [AppController],
   providers: [

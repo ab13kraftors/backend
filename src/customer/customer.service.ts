@@ -151,20 +151,38 @@ export class CustomerService {
   }
 
   async oneStep(participantId: string, dto: OneStepRegistrationDto) {
+    this.validateCreateRules(dto.customer);
     return this.dataSource.transaction(async (manager) => {
       // Create Customer
       const customer = manager.create(Customer, {
         ...dto.customer,
         participantId,
+        status: CustomerStatus.INACTIVE,
+        documentValidityDate: new Date(dto.customer.documentValidityDate),
+        dob: dto.customer.dob ? new Date(dto.customer.dob) : undefined,
       });
 
       const savedCustomer = await manager.save(customer);
+
+      // Existing Alias
+      const existingAlias = await manager.findOne(Alias, {
+        where: {
+          participantId,
+          value: dto.alias.value,
+          customer: savedCustomer,
+        },
+      });
+
+      if (existingAlias) {
+        throw new ConflictException('Alias already Exists');
+      }
 
       // Create Alias
       const alias = manager.create(Alias, {
         ...dto.alias,
         participantId,
         ccuuid: savedCustomer.uuid,
+        customer: savedCustomer,
       });
 
       await manager.save(alias);
