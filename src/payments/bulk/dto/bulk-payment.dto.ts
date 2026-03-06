@@ -7,7 +7,7 @@ import {
   IsEnum,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { Currency } from 'src/common/enums/bulk.enums';
+import { Currency } from 'src/common/enums/transaction.enums';
 
 export class BulkPaymentItem {
   @IsString()

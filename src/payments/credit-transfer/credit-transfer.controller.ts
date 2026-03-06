@@ -6,7 +6,7 @@ import { CreditTransferDto } from './dto/credit-transfer.dto';
 export class CreditTransferController {
   constructor(private readonly cts: CreditTransferService) {}
 
-  @Post('credit-trasfer')
+  @Post('credit-transfer')
   initiate(@Body() dto: CreditTransferDto) {
     const participantId = 'BANK_A';
     return this.cts.initiate(participantId, dto);

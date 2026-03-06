@@ -4,10 +4,3 @@ export enum RtpStatus {
   REJECTED = 'REJECTED',
   EXPIRED = 'EXPIRED',
 }
-
-export enum Currency {
-  SLE = 'SLE', // Sierra Leone Leone
-  USD = 'USD',
-  EUR = 'EUR',
-  INR = 'INR',
-}

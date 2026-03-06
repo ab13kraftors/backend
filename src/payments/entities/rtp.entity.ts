@@ -1,4 +1,5 @@
-import { Currency, RtpStatus } from 'src/common/enums/rtp.enums';
+import { RtpStatus } from 'src/common/enums/rtp.enums';
+import { Currency } from 'src/common/enums/transaction.enums';
 import {
   Column,
   CreateDateColumn,
@@ -29,7 +30,7 @@ export class RTP {
   @Column()
   message: string;
 
-  @Column({ type: 'enum', enum: RtpStatus })
+  @Column({ type: 'enum', enum: RtpStatus, default: RtpStatus.PENDING })
   status: RtpStatus;
 
   @CreateDateColumn()

@@ -15,10 +15,16 @@ export class BulkBatch {
 
   @Index()
   @Column()
-  participantId: string; // Who uploaded the batch
+  participantId: string;
 
   @Column()
-  originalFileName: string;
+  debtorBic: string;
+
+  @Column()
+  debtorAccount: string;
+
+  @Column()
+  fileName: string;
 
   @Column({ default: 0 })
   totalRecords: number;
@@ -30,7 +36,7 @@ export class BulkBatch {
   failedRecords: number;
 
   @Column({ type: 'enum', enum: BulkStatus, default: BulkStatus.PENDING })
-  status: BulkBatch;
+  status: BulkStatus;
 
   @Column({ nullable: true })
   uploadedBy: string;
@@ -38,6 +44,6 @@ export class BulkBatch {
   @CreateDateColumn()
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ nullable: true })
   updatedAt: Date;
 }
