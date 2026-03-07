@@ -6,12 +6,14 @@ import { BulkBatch } from '../entities/bulk-batch.entity';
 import { BulkItem } from '../entities/bulk-item.entity';
 import { Transaction } from '../entities/transaction.entity';
 import { CasModule } from 'src/cas/cas.module';
+import { AccountsModule } from 'src/accounts/accounts.module';
 
 @Module({
   imports: [
     // Register the entities specifically for this module context
     TypeOrmModule.forFeature([BulkBatch, BulkItem, Transaction]),
-    CasModule, // Required because BulkService uses CasService
+    CasModule,
+    AccountsModule, // Required because BulkService uses CasService
   ],
   controllers: [BulkController],
   providers: [BulkService],

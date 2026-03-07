@@ -16,6 +16,8 @@ import { AesService } from './common/crypto/aes.service';
 import { FinaddressModule } from './finaddress/finaddress.module';
 import { PaymentsModule } from './payments/payments.module';
 import { CasModule } from './cas/cas.module';
+import { AccountsModule } from './accounts/accounts.module';
+import { WalletModule } from './wallet/wallet.module';
 
 @Module({
   imports: [
@@ -39,6 +41,8 @@ import { CasModule } from './cas/cas.module';
     FinaddressModule,
     PaymentsModule,
     CasModule,
+    AccountsModule,
+    WalletModule,
   ],
   controllers: [AppController],
   providers: [

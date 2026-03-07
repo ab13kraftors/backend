@@ -9,12 +9,14 @@ import {
   TransactionStatus,
   TransactionType,
 } from 'src/common/enums/transaction.enums';
+import { AccountsService } from 'src/accounts/accounts.service';
 
 @Injectable()
 export class CreditTransferService {
   constructor(
     @InjectRepository(Transaction) private txRepo: Repository<Transaction>,
     private casService: CasService,
+    private accService: AccountsService,
     private paymentsService: PaymentsService,
   ) {}
 
@@ -46,7 +48,25 @@ export class CreditTransferService {
     });
 
     const savedTx = await this.txRepo.save(tx);
-    savedTx.status = TransactionStatus.COMPLETED; // simulation
-    return this.txRepo.save(savedTx);
+
+    try {
+      // Ledger Transfer
+      await this.accService.transfer(
+        savedTx.txId,
+        savedTx.senderFinAddress,
+        savedTx.receiverFinAddress,
+        Number(savedTx.amount),
+      );
+
+      // Update status on success
+      savedTx.status = TransactionStatus.COMPLETED;
+
+      return await this.txRepo.save(savedTx);
+    } catch (error) {
+      // Handle failed transfer ( Insufficient Balance)
+      savedTx.status = TransactionStatus.FAILED;
+      await this.txRepo.save(savedTx);
+      throw error;
+    }
   }
 }

@@ -18,6 +18,7 @@ import {
   TransactionStatus,
   TransactionType,
 } from 'src/common/enums/transaction.enums';
+import { AccountsService } from 'src/accounts/accounts.service';
 
 @Injectable()
 export class BulkService {
@@ -25,6 +26,7 @@ export class BulkService {
     @InjectRepository(BulkBatch) private batchRepo: Repository<BulkBatch>,
     @InjectRepository(BulkItem) private itemRepo: Repository<BulkItem>,
     @InjectRepository(Transaction) private txRepo: Repository<Transaction>,
+    private accService: AccountsService,
     private cas: CasService,
   ) {}
 
@@ -37,7 +39,7 @@ export class BulkService {
   ) {
     if (!file) throw new BadRequestException('CSV file is missing');
 
-    // Create batch — status starts as VALIDATING
+    // Initial Batch Creation
     const batch = await this.batchRepo.save(
       this.batchRepo.create({
         participantId,
@@ -53,42 +55,69 @@ export class BulkService {
     batch.status = BulkStatus.PROCESSING;
     await this.batchRepo.save(batch);
 
+    // Process each row
     for (const row of rows) {
       const aliasType: AliasType =
         (row.aliasType as AliasType) ?? AliasType.MSISDN;
 
       try {
+        // Resolve Alias
         const receiver = await this.cas.resolveAlias(
           aliasType,
           row.receiverAlias,
         );
 
-        const tx = this.txRepo.create({
-          participantId,
-          channel: TransactionType.BULK_PAYMENT,
-          senderAlias: row.senderAlias,
-          receiverAlias: row.receiverAlias,
-          senderFinAddress: debtorAccount,
-          receiverFinAddress: receiver.finAddress,
-          amount: Number(row.amount),
-          currency,
-          status: TransactionStatus.COMPLETED,
-          reference: `BULK-${batch.bulkId}`,
-        });
-        await this.txRepo.save(tx);
-
-        await this.itemRepo.save(
-          this.itemRepo.create({
-            bulkId: batch.bulkId,
+        // Create Transaction
+        const tx = await this.txRepo.save(
+          this.txRepo.create({
+            participantId,
+            channel: TransactionType.BULK_PAYMENT,
             senderAlias: row.senderAlias,
             receiverAlias: row.receiverAlias,
+            senderFinAddress: debtorAccount,
+            receiverFinAddress: receiver.finAddress,
             amount: Number(row.amount),
             currency,
-            status: ItemStatus.SUCCESS,
+            status: TransactionStatus.INITIATED,
+            reference: `BULK-${batch.bulkId}`,
           }),
         );
-        batch.processedRecords++;
+
+        // Ledger Transfer
+        try {
+          await this.accService.transfer(
+            tx.txId,
+            tx.senderFinAddress,
+            tx.receiverFinAddress,
+            Number(tx.amount),
+          );
+
+          // Update Transaction to COMPLETED
+          tx.status = TransactionStatus.COMPLETED;
+          await this.txRepo.save(tx);
+
+          // Record Item Success
+          await this.itemRepo.save(
+            this.itemRepo.create({
+              bulkId: batch.bulkId,
+              senderAlias: row.senderAlias,
+              receiverAlias: row.receiverAlias,
+              amount: Number(row.amount),
+              currency,
+              status: ItemStatus.SUCCESS,
+            }),
+          );
+          batch.processedRecords++;
+        } catch (transferError) {
+          // Handle specific ledger failure (e.g., Insufficient Funds)
+          tx.status = TransactionStatus.FAILED;
+          await this.txRepo.save(tx);
+
+          // Re-throw to catch block below to log item failure
+          throw new Error(`Ledger Transfer Failed: ${transferError.message}`);
+        }
       } catch (error) {
+        // Log failure and CONTINUE loop
         await this.itemRepo.save(
           this.itemRepo.create({
             bulkId: batch.bulkId,
@@ -104,6 +133,7 @@ export class BulkService {
       }
     }
 
+    // 3. Finalize Batch Status
     if (batch.failedRecords === 0) {
       batch.status = BulkStatus.COMPLETED;
     } else if (batch.processedRecords === 0) {
@@ -111,9 +141,14 @@ export class BulkService {
     } else {
       batch.status = BulkStatus.PARTIAL;
     }
-    await this.batchRepo.save(batch);
 
-    return { bulkId: batch.bulkId, status: batch.status };
+    await this.batchRepo.save(batch);
+    return {
+      bulkId: batch.bulkId,
+      status: batch.status,
+      processed: batch.processedRecords,
+      failed: batch.failedRecords,
+    };
   }
 
   private parseCsv(buffer: Buffer): Promise<any[]> {

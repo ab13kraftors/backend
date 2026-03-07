@@ -18,3 +18,8 @@ export enum Currency {
   EUR = 'EUR',
   INR = 'INR',
 }
+
+export enum CrDbType {
+  CREDIT = 'CREDIT',
+  DEBIT = 'DEBIT',
+}

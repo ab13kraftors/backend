@@ -11,6 +11,9 @@ import { QrModule } from './qr/qr.module';
 import { RtpModule } from './rtp/rtp.module';
 import { BulkItem } from './entities/bulk-item.entity';
 import { BulkModule } from './bulk/bulk.module';
+import { AccountsModule } from 'src/accounts/accounts.module';
+import { TransactionModule } from './transaction/transaction.module';
+import { VerifyModule } from './verify/verify.module';
 
 @Module({
   imports: [
@@ -19,6 +22,9 @@ import { BulkModule } from './bulk/bulk.module';
     QrModule,
     RtpModule,
     BulkModule,
+    AccountsModule,
+    TransactionModule,
+    VerifyModule,
   ],
   controllers: [CreditTransferController],
   providers: [PaymentsService, CreditTransferService],

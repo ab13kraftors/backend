@@ -10,12 +10,14 @@ import {
 } from 'src/common/enums/transaction.enums';
 import * as QRCode from 'qrcode';
 import { CasService } from 'src/cas/cas.service';
+import { AccountsService } from 'src/accounts/accounts.service';
 
 @Injectable()
 export class QrService {
   constructor(
     @InjectRepository(Transaction)
     private txRepo: Repository<Transaction>,
+    private accService: AccountsService,
     private cas: CasService, // Fixed name
   ) {}
 
@@ -73,11 +75,31 @@ export class QrService {
       receiverAlias: parsedData.aliasValue,
       amount: finalAmount,
       currency,
-      status: TransactionStatus.COMPLETED, // Simulation: directly completed
+      status: TransactionStatus.INITIATED,
       reference: parsedData.reference || `QR Payment to ${merchant.finAddress}`,
     });
 
-    return this.txRepo.save(tx);
+    const savedTx = await this.txRepo.save(tx);
+
+    try {
+      // Ledger Transfer
+      await this.accService.transfer(
+        savedTx.txId,
+        savedTx.senderFinAddress,
+        savedTx.receiverFinAddress,
+        Number(savedTx.amount),
+      );
+
+      // Update status on success
+      savedTx.status = TransactionStatus.COMPLETED;
+
+      return await this.txRepo.save(savedTx);
+    } catch (error) {
+      // Handle failed transfer ( Insufficient Balance)
+      savedTx.status = TransactionStatus.FAILED;
+      await this.txRepo.save(savedTx);
+      throw error;
+    }
   }
 
   async createQR(dto: QrGenerateDto) {

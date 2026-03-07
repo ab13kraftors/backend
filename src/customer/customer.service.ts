@@ -15,6 +15,7 @@ import { DataSource } from 'typeorm';
 import { Alias } from 'src/alias/entities/alias.entity';
 import { FinAddress } from 'src/finaddress/entities/finaddress.entity';
 import { OneStepRegistrationDto } from './dto/one-step-registration.dto';
+import { WalletService } from 'src/wallet/wallet.service';
 // ---One Step Registration---
 
 @Injectable()
@@ -23,6 +24,7 @@ export class CustomerService {
     private readonly dataSource: DataSource,
     @InjectRepository(Customer)
     private customerRepository: Repository<Customer>,
+    private walletService: WalletService,
   ) {}
 
   async create(
@@ -47,7 +49,11 @@ export class CustomerService {
       dob: dto.dob ? new Date(dto.dob) : undefined,
     });
 
-    return this.customerRepository.save(customer);
+    const savedCustomer = await this.customerRepository.save(customer);
+
+    await this.walletService.createWallet(savedCustomer.uuid, participantId);
+
+    return savedCustomer;
   }
 
   async update(
@@ -197,10 +203,16 @@ export class CustomerService {
 
       await manager.save(fin);
 
+      const wallet = await this.walletService.createWallet(
+        savedCustomer.uuid,
+        participantId,
+      );
+
       return {
         customer: savedCustomer,
         alias,
         finaddress: fin,
+        wallet,
       };
     });
   }

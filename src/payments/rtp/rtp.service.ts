@@ -14,12 +14,14 @@ import {
   TransactionStatus,
   TransactionType,
 } from 'src/common/enums/transaction.enums';
+import { AccountsService } from 'src/accounts/accounts.service';
 
 @Injectable()
 export class RtpService {
   constructor(
     @InjectRepository(RTP) private rtpRepo: Repository<RTP>,
     @InjectRepository(Transaction) private txRepo: Repository<Transaction>,
+    private accService: AccountsService,
     private cas: CasService,
   ) {}
   //   Request First
@@ -67,12 +69,37 @@ export class RtpService {
       reference: rtp.message,
     });
 
-    await this.rtpRepo.update(rtpMsgId, {
-      status: RtpStatus.ACCEPTED,
-      message: 'Accepted by the payer',
-    });
-    console.log('Accepted by the payer');
-    return this.txRepo.save(tx);
+    const savedTx = await this.txRepo.save(tx); // Now savedTx is defined!
+
+    try {
+      // Ledger Transfer
+      await this.accService.transfer(
+        savedTx.txId,
+        savedTx.senderFinAddress,
+        savedTx.receiverFinAddress,
+        Number(savedTx.amount),
+      );
+
+      // Update Transaction and RTP on Success
+      savedTx.status = TransactionStatus.COMPLETED;
+      await this.rtpRepo.update(rtpMsgId, {
+        status: RtpStatus.ACCEPTED,
+        message: 'Payment completed successfully',
+      });
+
+      return await this.txRepo.save(savedTx);
+    } catch (error) {
+      // Rollback status on failure (Insufficient Funds)
+      savedTx.status = TransactionStatus.FAILED;
+      await this.txRepo.save(savedTx);
+
+      // Also update RTP status so payer can try again or see failure
+      await this.rtpRepo.update(rtpMsgId, {
+        message: `Payment failed: ${error}`,
+      });
+
+      throw error;
+    }
   }
 
   async reject(rtpMsgId: string) {
