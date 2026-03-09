@@ -14,6 +14,9 @@ export class CreditTransferDto {
   @IsNotEmpty()
   senderAlias: string;
 
+  @IsEnum(AliasType)
+  senderAliasType: AliasType;
+
   @IsString()
   @IsNotEmpty()
   receiverAlias: string;
@@ -22,7 +25,7 @@ export class CreditTransferDto {
   receiverAliasType: AliasType;
 
   @IsNumber()
-  @IsPositive() // Prevents negative amounts
+  @IsPositive()
   amount: number;
 
   @IsEnum(Currency)
@@ -30,6 +33,6 @@ export class CreditTransferDto {
 
   @IsString()
   @IsNotEmpty()
-  @MinLength(3) // Ensures reference isn't just a single character
+  @MinLength(3)
   reference: string;
 }

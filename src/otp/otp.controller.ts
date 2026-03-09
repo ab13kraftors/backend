@@ -7,15 +7,19 @@ import {
   ParseUUIDPipe,
 } from '@nestjs/common';
 import { OtpService } from './otp.service';
-import { ParticipantGuard } from 'src/common/guards/participant/participant.guard';
 import { Participant } from 'src/common/decorators/participant/participant.decorator';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 
-@UseGuards(JwtAuthGuard, ParticipantGuard)
+@UseGuards(JwtAuthGuard)
 @Controller('api/fp/cas/v2/customer')
 export class OtpController {
-  constructor(private readonly otpService: OtpService) {}
+  constructor(
+    // Inject OTP service
+    private readonly otpService: OtpService,
+  ) {}
 
+  // ================== generateOtp ==================
+  // Generates OTP for customer activation
   @Get(':uuid/otp')
   generateOtp(
     @Participant() participantId: string,
@@ -24,6 +28,8 @@ export class OtpController {
     return this.otpService.generate(participantId, uuid);
   }
 
+  // ================== completeOtp ==================
+  // Verifies OTP and activates the customer
   @Post(':uuid/:otp/completion')
   completeOtp(
     @Participant() participantId: string,

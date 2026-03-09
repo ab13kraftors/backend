@@ -28,10 +28,10 @@ export class BulkItem {
   currency: Currency;
 
   @Column({ type: 'enum', enum: ItemStatus, default: ItemStatus.FAILED })
-  status: ItemStatus; // FIX: was plain string — now typed enum
+  status: ItemStatus;
 
   @Column({ nullable: true })
-  errorMessage: string; // FIX: was silently skipped in service — now usable
+  errorMessage: string;
 
   @Column({ nullable: true })
   uploadedBy: string;

@@ -1,17 +1,13 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
 import { Request } from 'express';
 
-// export const Participant = createParamDecorator(
-//   (_: unknown, ctx: ExecutionContext) => {
-//     const request = ctx.switchToHttp().getRequest<any>();
-//     return request.participantId;
-//   },
-// );
-
+// Custom decorator to extract participantId from request
 export const Participant = createParamDecorator(
-  (data: unknown, ctx: ExecutionContext) => {
+  (_data: unknown, ctx: ExecutionContext): string => {
+    // Get HTTP request object
     const request = ctx.switchToHttp().getRequest();
-    // Passport puts the JWT payload in request.user
-    return request.user?.participantId;
+
+    // Return participantId set by ParticipantGuard
+    return request.participantId; // set by ParticipantGuard from participant-id header
   },
 );

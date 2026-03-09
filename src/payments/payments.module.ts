@@ -14,6 +14,7 @@ import { BulkModule } from './bulk/bulk.module';
 import { AccountsModule } from 'src/accounts/accounts.module';
 import { TransactionModule } from './transaction/transaction.module';
 import { VerifyModule } from './verify/verify.module';
+import { FundingModule } from './funding/funding.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { VerifyModule } from './verify/verify.module';
     AccountsModule,
     TransactionModule,
     VerifyModule,
+    FundingModule,
   ],
   controllers: [CreditTransferController],
   providers: [PaymentsService, CreditTransferService],

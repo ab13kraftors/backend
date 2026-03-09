@@ -5,3 +5,9 @@ export enum BulkStatus {
   FAILED = 'FAILED',
   PARTIAL = 'PARTIAL',
 }
+
+export enum FundMethod {
+  CARD = 'CARD',
+  BANK = 'BANK',
+  MOBILE_MONEY = 'MOBILE_MONEY',
+}

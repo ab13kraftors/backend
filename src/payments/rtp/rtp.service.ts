@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { RTP } from '../entities/rtp.entity';
@@ -18,44 +19,67 @@ import { AccountsService } from 'src/accounts/accounts.service';
 
 @Injectable()
 export class RtpService {
+  // Logger for RTP operations
+  private readonly logger = new Logger(RtpService.name);
+
   constructor(
+    // Inject RTP repository
     @InjectRepository(RTP) private rtpRepo: Repository<RTP>,
+
+    // Inject Transaction repository
     @InjectRepository(Transaction) private txRepo: Repository<Transaction>,
+
+    // Inject Accounts service for ledger transfers
     private accService: AccountsService,
+
+    // Inject CAS service for alias resolution
     private cas: CasService,
   ) {}
-  //   Request First
+
+  // ================== initiate ==================
+  // Creates a new Request-To-Pay record
   async initiate(participantId: string, dto: any) {
+    // Determine expiry time from environment variable
+    const expiryMs = Number(process.env.RTP_EXPIRY_MINUTES ?? 60) * 60 * 1000;
+
     const rtp = this.rtpRepo.create({
       ...dto,
       participantId,
+      requesterAliasTypes: dto.requesterAliasType,
       status: RtpStatus.PENDING,
-      expiresAt: new Date(Date.now() + 1 * 60 * 1000), //test
-      //    expiresAt: new Date(Date.now() + 1 * 60 * 60 * 1000),
+      expiresAt: new Date(Date.now() + expiryMs),
     });
+
     return this.rtpRepo.save(rtp);
   }
 
-  //   Pay the request
+  // ================== approve ==================
+  // Approves RTP request and performs payment
   async approve(rtpMsgId: string, debtorAccount: string) {
     const rtp = await this.rtpRepo.findOne({ where: { rtpMsgId } });
+
     if (!rtp) throw new NotFoundException('RTP not found');
 
+    // Validate RTP status
     if (rtp.status !== RtpStatus.PENDING) {
       throw new BadRequestException(
         `RTP cannot be processed. Current status: ${rtp.status}`,
       );
     }
 
+    // Check expiry
     if (new Date() > rtp.expiresAt) {
       await this.rtpRepo.update(rtpMsgId, { status: RtpStatus.EXPIRED });
       throw new BadRequestException('RTP request has expired');
     }
+
+    // Resolve requester alias to financial address
     const creditor = await this.cas.resolveAlias(
-      AliasType.MSISDN,
+      rtp.requesterAliasType,
       rtp.requesterAlias,
     );
 
+    // Create transaction record
     const tx = this.txRepo.create({
       participantId: rtp.participantId,
       channel: TransactionType.RTP_PAYMENT,
@@ -65,14 +89,14 @@ export class RtpService {
       receiverFinAddress: creditor.finAddress,
       amount: rtp.amount,
       currency: rtp.currency,
-      status: TransactionStatus.COMPLETED,
+      status: TransactionStatus.INITIATED,
       reference: rtp.message,
     });
 
-    const savedTx = await this.txRepo.save(tx); // Now savedTx is defined!
+    const savedTx = await this.txRepo.save(tx);
 
     try {
-      // Ledger Transfer
+      // Perform ledger transfer
       await this.accService.transfer(
         savedTx.txId,
         savedTx.senderFinAddress,
@@ -80,8 +104,10 @@ export class RtpService {
         Number(savedTx.amount),
       );
 
-      // Update Transaction and RTP on Success
+      // Update transaction status
       savedTx.status = TransactionStatus.COMPLETED;
+
+      // Update RTP status
       await this.rtpRepo.update(rtpMsgId, {
         status: RtpStatus.ACCEPTED,
         message: 'Payment completed successfully',
@@ -89,11 +115,11 @@ export class RtpService {
 
       return await this.txRepo.save(savedTx);
     } catch (error) {
-      // Rollback status on failure (Insufficient Funds)
+      // Mark transaction failed
       savedTx.status = TransactionStatus.FAILED;
       await this.txRepo.save(savedTx);
 
-      // Also update RTP status so payer can try again or see failure
+      // Update RTP with failure message
       await this.rtpRepo.update(rtpMsgId, {
         message: `Payment failed: ${error}`,
       });
@@ -102,19 +128,28 @@ export class RtpService {
     }
   }
 
+  // ================== reject ==================
+  // Rejects an RTP request
   async reject(rtpMsgId: string) {
     const rtp = await this.rtpRepo.findOne({ where: { rtpMsgId } });
+
     if (!rtp) throw new NotFoundException('RTP not found');
 
+    // Ensure RTP is still pending
     if (rtp.status !== RtpStatus.PENDING) {
       throw new BadRequestException('RTP already processed');
     }
-    console.log('Reject by the payer');
+
+    this.logger.log(`RTP rejected by payer`, { rtpMsgId });
+
     return this.rtpRepo.update(rtpMsgId, {
       status: RtpStatus.REJECTED,
       message: 'Reject by the payer',
     });
   }
+
+  // ================== findPendingByPayer ==================
+  // Returns all pending RTP requests for a payer
   async findPendingByPayer(payerAlias: string) {
     return this.rtpRepo.find({
       where: {

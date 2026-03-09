@@ -1,3 +1,4 @@
+import { AliasType } from 'src/common/enums/alias.enums';
 import { RtpStatus } from 'src/common/enums/rtp.enums';
 import { Currency } from 'src/common/enums/transaction.enums';
 import {
@@ -17,6 +18,9 @@ export class RTP {
 
   @Column()
   requesterAlias: string;
+
+  @Column({ type: 'enum', enum: AliasType, default: AliasType.MSISDN })
+  requesterAliasType: AliasType;
 
   @Column()
   payerAlias: string;

@@ -8,7 +8,7 @@ import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 //   password: process.env.DB_PASS,
 //   database: process.env.DB_NAME,
 //   autoLoadEntities: true,
-//   synchronize: true,
+//   synchronize:  process.env.NODE_ENV !== 'production'
 // };
 
 export const databaseConfig: TypeOrmModuleOptions = {

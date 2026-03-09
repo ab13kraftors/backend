@@ -17,8 +17,13 @@ import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 @UseGuards(JwtAuthGuard)
 @Controller('api/fp/cas/v2/customer')
 export class AliasController {
-  constructor(private readonly aliasService: AliasService) {}
+  constructor(
+    // Inject Alias service
+    private readonly aliasService: AliasService,
+  ) {}
 
+  // ================== create ==================
+  // Creates a new alias for a customer
   @Post(':ccuuid/aliases')
   create(
     @Participant() participantId: string,
@@ -28,6 +33,8 @@ export class AliasController {
     return this.aliasService.create(participantId, ccuuid, dto);
   }
 
+  // ================== findAll ==================
+  // Returns all aliases for a customer
   @Get(':ccuuid/aliases')
   findAll(
     @Participant() participantId: string,
@@ -36,6 +43,8 @@ export class AliasController {
     return this.aliasService.findAll(participantId, ccuuid);
   }
 
+  // ================== update ==================
+  // Updates an existing alias
   @Put(':ccuuid/aliases/:aliasUuid')
   update(
     @Participant() participantId: string,
@@ -46,6 +55,8 @@ export class AliasController {
     return this.aliasService.update(participantId, ccuuid, aliasUuid, dto);
   }
 
+  // ================== remove ==================
+  // Deletes a customer alias
   @Delete(':ccuuid/aliases/:aliasUuid')
   remove(
     @Participant() participantId: string,

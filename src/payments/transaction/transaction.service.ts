@@ -7,31 +7,38 @@ import { TransactionStatus } from 'src/common/enums/transaction.enums';
 @Injectable()
 export class TransactionService {
   constructor(
+    // Inject Transaction repository
     @InjectRepository(Transaction)
     private txRepo: Repository<Transaction>,
   ) {}
 
+  // ================== findAll ==================
+  // Returns paginated list of transactions
   async findAll(
     participantId: string,
     pageNo = 1,
     pageSize = 20,
-    status?: TransactionStatus, // Made optional
+    status?: TransactionStatus,
   ) {
+    // Create query builder
     const qb = this.txRepo.createQueryBuilder('tx');
 
-    // 1. Build Conditions
+    // Filter by participant
     qb.where('tx.participantId = :participantId', { participantId });
+
+    // Optional filter by status
     if (status) {
       qb.andWhere('tx.status = :status', { status });
     }
 
-    // 2. Add Pagination & Sorting
+    // Apply sorting and pagination
     qb.orderBy('tx.createdAt', 'DESC')
       .skip((pageNo - 1) * pageSize)
       .take(pageSize);
 
     const [data, total] = await qb.getManyAndCount();
 
+    // Return paginated response
     return {
       pageNo: Number(pageNo),
       pageSize: Number(pageSize),
@@ -41,9 +48,13 @@ export class TransactionService {
     };
   }
 
+  // ================== findOne ==================
+  // Returns a specific transaction by ID
   async findOne(txId: string) {
     const tx = await this.txRepo.findOne({ where: { txId } });
+
     if (!tx) throw new NotFoundException(`Transaction ${txId} does not exist.`);
+
     return tx;
   }
 }

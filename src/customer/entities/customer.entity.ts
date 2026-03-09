@@ -66,6 +66,9 @@ export class Customer {
   @Column({ nullable: true })
   msisdnIsOwned?: boolean;
 
+  @Column({ nullable: true, select: false })
+  pinHash?: string;
+
   // INDIVIDUAL-only============================
   @Column({ nullable: true })
   firstName?: string;

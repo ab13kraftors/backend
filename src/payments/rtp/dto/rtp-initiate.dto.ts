@@ -14,6 +14,9 @@ export class RtpInitiateDto {
   @IsNotEmpty()
   requesterAlias: string;
 
+  @IsEnum(AliasType)
+  requesterAliasType: AliasType;
+
   @IsString()
   @IsNotEmpty()
   payerAlias: string;

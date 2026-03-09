@@ -18,6 +18,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { CasModule } from './cas/cas.module';
 import { AccountsModule } from './accounts/accounts.module';
 import { WalletModule } from './wallet/wallet.module';
+import { ParticipantGuard } from './common/guards/participant/participant.guard';
 
 @Module({
   imports: [
@@ -51,6 +52,10 @@ import { WalletModule } from './wallet/wallet.module';
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: ParticipantGuard,
     },
     {
       provide: APP_INTERCEPTOR,

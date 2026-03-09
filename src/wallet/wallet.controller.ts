@@ -1,47 +1,63 @@
-import {
-  Controller,
-  Get,
-  Param,
-  UseGuards,
-  Post,
-  Body,
-  Req,
-} from '@nestjs/common';
+import { Controller, Get, Param, UseGuards, Post, Body } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
-import { ParticipantGuard } from 'src/common/guards/participant/participant.guard';
 import { WalletService } from './wallet.service';
 import { FundWalletDto } from './dto/fund-wallet.dto';
 import { WithdrawWalletDto } from './dto/withdraw-wallet.dto';
 import { TransferWalletDto } from './dto/transfer-wallet.dto';
+import { Participant } from 'src/common/decorators/participant/participant.decorator';
 
-@UseGuards(JwtAuthGuard, ParticipantGuard)
+@UseGuards(JwtAuthGuard)
 @Controller('/api/fp/wallet')
 export class WalletController {
-  constructor(private readonly wallService: WalletService) {}
+  constructor(
+    // Inject Wallet service
+    private readonly wallService: WalletService,
+  ) {}
 
+  // ================== getBalance ==================
+  // Returns balance of a wallet belonging to the participant
   @Get(':walletId/balance')
-  getBalance(@Param('walletId') walletId: string, @Req() req: any) {
-    // Ensure we only see balances for wallets in our own bank
-    return this.wallService.getBalance(walletId, req.participantId);
+  getBalance(
+    @Param('walletId') walletId: string,
+    @Participant() participantId: string,
+  ) {
+    return this.wallService.getBalance(walletId, participantId);
   }
 
+  // ================== fund ==================
+  // Funds a wallet from the system pool
   @Post('fund')
-  fund(@Body() dto: FundWalletDto, @Req() req: any) {
-    return this.wallService.fundWallet(dto, req.participantId);
+  fund(@Body() dto: FundWalletDto, @Participant() participantId: string) {
+    return this.wallService.fundWallet(dto, participantId);
   }
 
+  // ================== withdraw ==================
+  // Withdraws money from wallet to system pool
   @Post('withdraw')
-  withdraw(@Body() dto: WithdrawWalletDto, @Req() req: any) {
-    return this.wallService.withdrawWallet(dto, req.participantId);
+  withdraw(
+    @Body() dto: WithdrawWalletDto,
+    @Participant() participantId: string,
+  ) {
+    return this.wallService.withdrawWallet(dto, participantId);
   }
 
+  // ================== getHistory ==================
+  // Returns transaction history of the wallet
   @Post(':walletId/history')
-  getHistory(@Param('walletId') walletId: string, @Req() req: any) {
-    return this.wallService.getHistory(walletId, req.participantId);
+  getHistory(
+    @Param('walletId') walletId: string,
+    @Participant() participantId: string,
+  ) {
+    return this.wallService.getHistory(walletId, participantId);
   }
 
+  // ================== transfer ==================
+  // Transfers funds between wallets
   @Post('transfer')
-  transfer(@Body() dto: TransferWalletDto, @Req() req: any) {
-    return this.wallService.transferWallet(dto, req.participantId);
+  transfer(
+    @Body() dto: TransferWalletDto,
+    @Participant() participantId: string,
+  ) {
+    return this.wallService.transferWallet(dto, participantId);
   }
 }

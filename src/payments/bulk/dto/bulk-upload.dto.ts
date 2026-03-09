@@ -3,10 +3,10 @@ import { IsString, IsEnum } from 'class-validator';
 
 export class BulkUploadDto {
   @IsString()
-  debtorBic: string; // FIX: renamed bic → debtorBic to match entity + Switch API
+  debtorBic: string;
 
   @IsString()
-  debtorAccount: string; // FIX: ADDED — required by the Switch bulk endpoint
+  debtorAccount: string;
 
   @IsEnum(Currency)
   currency: Currency;

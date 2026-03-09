@@ -1,4 +1,10 @@
-import { IsNumber, IsPositive, IsString } from 'class-validator';
+import {
+  IsNumber,
+  IsPositive,
+  IsString,
+  Length,
+  Matches,
+} from 'class-validator';
 
 export class FundWalletDto {
   @IsString()
@@ -7,4 +13,9 @@ export class FundWalletDto {
   @IsNumber()
   @IsPositive()
   amount: number;
+
+  @IsString()
+  @Length(6, 6)
+  @Matches(/^\d{6}$/)
+  pin: string;
 }

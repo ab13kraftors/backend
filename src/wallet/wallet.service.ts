@@ -1,6 +1,8 @@
 import {
   BadRequestException,
+  forwardRef,
   Injectable,
+  Inject,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -17,17 +19,30 @@ import {
 } from 'src/common/enums/transaction.enums';
 import { Transaction } from 'src/payments/entities/transaction.entity';
 import { TransferWalletDto } from './dto/transfer-wallet.dto';
+import { CustomerService } from 'src/customer/customer.service';
+
 @Injectable()
 export class WalletService {
-  private readonly SYSTEM_POOL_FIN = 'SYSTEM_INTERNAL';
+  // Internal system account used as liquidity pool
+  private readonly SYSTEM_POOL_FIN = 'SYSTEM_INTERNAL'; // Testing
 
   constructor(
+    // Inject Wallet repository
     @InjectRepository(Wallet) private wallRepo: Repository<Wallet>,
+
+    // Inject Transaction repository
     @InjectRepository(Transaction) private txRepo: Repository<Transaction>,
+
+    // Inject Accounts service for ledger transfers
     private accService: AccountsService,
+
+    // Inject Customer service (forwardRef to avoid circular dependency)
+    @Inject(forwardRef(() => CustomerService))
+    private customerService: CustomerService,
   ) {}
 
-  // ==========Create Wallet==============
+  // ================== createWallet ==================
+  // Creates wallet and corresponding ledger account
   async createWallet(ccuuid: string, participantId: string) {
     const finAddress = `WALLET-${ccuuid}`;
 
@@ -42,6 +57,7 @@ export class WalletService {
 
     const saved = await this.wallRepo.save(myWallet);
 
+    // Create corresponding ledger account
     await this.accService.create(participantId, {
       finAddress,
       currency: Currency.SLE,
@@ -52,7 +68,8 @@ export class WalletService {
     return saved;
   }
 
-  // ==========Get Balance==============
+  // ================== getBalance ==================
+  // Returns wallet balance
   async getBalance(walletId: string, participantId: string) {
     const myWallet = await this.wallRepo.findOne({
       where: { walletId, participantId },
@@ -64,10 +81,12 @@ export class WalletService {
       walletId: myWallet.walletId,
       balance: myWallet.balance,
       currency: myWallet.currency,
+      status: myWallet.status,
     };
   }
 
-  // ==========Get History==============
+  // ================== getHistory ==================
+  // Returns last 20 wallet transactions
   async getHistory(walletId: string, participantId: string) {
     const myWallet = await this.wallRepo.findOne({
       where: { walletId, participantId },
@@ -79,16 +98,14 @@ export class WalletService {
       where: [
         { senderFinAddress: myWallet.finAddress, participantId },
         { receiverFinAddress: myWallet.finAddress, participantId },
-        // Also check by walletId if you logged it that way
-        { senderFinAddress: myWallet.walletId, participantId },
-        { receiverFinAddress: myWallet.walletId, participantId },
       ],
       order: { createdAt: 'DESC' },
       take: 20,
     });
   }
 
-  // ==========Fund Wallet==============
+  // ================== fundWallet ==================
+  // Adds money from system pool to wallet
   async fundWallet(dto: FundWalletDto, participantId: string) {
     const myWallet = await this.wallRepo.findOne({
       where: { walletId: dto.walletId, participantId },
@@ -96,8 +113,12 @@ export class WalletService {
 
     if (!myWallet) throw new NotFoundException('Wallet does not exists!!');
 
+    // Verify PIN before funding
+    await this.verifyPinWithLock(myWallet, participantId, dto.pin);
+
     const txId = `FUND-${Date.now()}`;
 
+    // Ledger transfer (System → Wallet)
     await this.accService.transfer(
       txId,
       this.SYSTEM_POOL_FIN,
@@ -105,13 +126,14 @@ export class WalletService {
       dto.amount,
     );
 
+    // Record transaction
     await this.txRepo.save(
       this.txRepo.create({
         participantId: myWallet.participantId,
         channel: TransactionType.CREDIT_TRANSFER,
         senderAlias: 'SYSTEM_POOL',
         receiverAlias: myWallet.ccuuid,
-        senderFinAddress: 'SYSTEM',
+        senderFinAddress: this.SYSTEM_POOL_FIN,
         receiverFinAddress: myWallet.finAddress,
         amount: dto.amount,
         currency: myWallet.currency,
@@ -120,25 +142,31 @@ export class WalletService {
       }),
     );
 
+    // Update wallet balance
     myWallet.balance = Number(myWallet.balance) + dto.amount;
 
     return this.wallRepo.save(myWallet);
   }
 
-  // ==========Withdraw From Wallet==============
+  // ================== withdrawWallet ==================
+  // Withdraws money from wallet to system pool
   async withdrawWallet(dto: WithdrawWalletDto, participantId: string) {
     const myWallet = await this.wallRepo.findOne({
       where: { walletId: dto.walletId, participantId },
     });
     if (!myWallet) throw new NotFoundException('Wallet not found');
 
+    // Verify PIN with lock handling
+    await this.verifyPinWithLock(myWallet, participantId, dto.pin);
+
+    // Check wallet balance
     if (Number(myWallet.balance) < dto.amount) {
       throw new BadRequestException('Insufficient wallet balance');
     }
 
-    // 1. Ledger Move (Debit User, Credit Bank/System)
     const txId = `WITHDRAW-${Date.now()}`;
 
+    // Ledger transfer (Wallet → System)
     await this.accService.transfer(
       txId,
       myWallet.finAddress,
@@ -146,7 +174,7 @@ export class WalletService {
       dto.amount,
     );
 
-    // 2. Log Transaction
+    // Log transaction
     await this.txRepo.save(
       this.txRepo.create({
         participantId: myWallet.participantId,
@@ -154,7 +182,7 @@ export class WalletService {
         senderAlias: myWallet.ccuuid,
         receiverAlias: 'SYSTEM_POOL',
         senderFinAddress: myWallet.finAddress,
-        receiverFinAddress: 'SYSTEM',
+        receiverFinAddress: this.SYSTEM_POOL_FIN,
         amount: dto.amount,
         currency: myWallet.currency,
         status: TransactionStatus.COMPLETED,
@@ -162,26 +190,31 @@ export class WalletService {
       }),
     );
 
-    // 3. Update Balance
+    // Update wallet balance
     myWallet.balance = Number(myWallet.balance) - dto.amount;
+
     return this.wallRepo.save(myWallet);
   }
 
-  // ==========Wallet Transfer==============
+  // ================== transferWallet ==================
+  // Transfers funds between two wallets
   async transferWallet(dto: TransferWalletDto, participantId: string) {
-    // sender wallet
+    // Sender wallet
     const sender = await this.wallRepo.findOne({
       where: { walletId: dto.senderWalletId, participantId },
     });
     if (!sender) throw new NotFoundException('Sender wallet not found');
 
-    // receiver wallet by finAddress — cross-participant allowed
+    // Verify PIN with lock handling
+    await this.verifyPinWithLock(sender, participantId, dto.pin);
+
+    // Receiver wallet by finAddress
     const receiver = await this.wallRepo.findOne({
       where: { finAddress: dto.receiverFinAddress },
     });
     if (!receiver) throw new NotFoundException('Receiver wallet not found');
 
-    // self transfer not possible wallet to wallet
+    // Prevent self-transfer
     if (sender.walletId === receiver.walletId) {
       throw new BadRequestException('Cannot transfer to your own wallet');
     }
@@ -191,16 +224,17 @@ export class WalletService {
       throw new BadRequestException('Insufficient wallet balance');
     }
 
-    // Move money in accounts ledger
     const txId = `TRANSFER-${Date.now()}`;
+
+    // Ledger transfer (Wallet → Wallet)
     await this.accService.transfer(
       txId,
-      sender.finAddress, // WALLET-{uuidA}
-      receiver.finAddress, // WALLET-{uuidB}
+      sender.finAddress,
+      receiver.finAddress,
       dto.amount,
     );
 
-    // Log transaction
+    // Record transaction
     await this.txRepo.save(
       this.txRepo.create({
         participantId: sender.participantId,
@@ -216,7 +250,7 @@ export class WalletService {
       }),
     );
 
-    // Update both wallet balances
+    // Update wallet balances
     sender.balance = Number(sender.balance) - dto.amount;
     receiver.balance = Number(receiver.balance) + dto.amount;
 
@@ -228,5 +262,41 @@ export class WalletService {
       senderBalance: sender.balance,
       receiverBalance: receiver.balance,
     };
+  }
+
+  // ================== Private PIN Verification ==================
+  private async verifyPinWithLock(
+    myWallet: Wallet,
+    participantId: string,
+    pin: string,
+  ): Promise<void> {
+    try {
+      await this.customerService.verifyPin(myWallet.ccuuid, participantId, pin);
+
+      // Reset attempts on success
+      myWallet.pinAttempts = 0;
+      await this.wallRepo.save(myWallet);
+    } catch (error) {
+      // Increase attempt counter
+      myWallet.pinAttempts = (myWallet.pinAttempts ?? 0) + 1;
+
+      // Lock wallet after 3 failed attempts
+      if (myWallet.pinAttempts >= 3) {
+        myWallet.status = WalletStatus.LOCKED;
+      }
+
+      await this.wallRepo.save(myWallet);
+
+      if (myWallet.status === WalletStatus.LOCKED) {
+        throw new BadRequestException(
+          'Wallet locked due to multiple incorrect PIN attempts',
+        );
+      }
+
+      throw new BadRequestException(
+        `Invalid PIN. Attempt ${myWallet.pinAttempts}/3 and 
+        ${error}`,
+      );
+    }
   }
 }

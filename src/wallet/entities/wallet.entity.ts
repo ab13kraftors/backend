@@ -27,7 +27,10 @@ export class Wallet {
   @Column({ type: 'decimal', precision: 18, scale: 2, default: 0 })
   balance: number;
 
-  @Column({ type: 'enum', enum: WalletStatus })
+  @Column({ default: 0 })
+  pinAttempts: number;
+
+  @Column({ type: 'enum', enum: WalletStatus, default: WalletStatus.ACTIVE })
   status: WalletStatus;
 
   @CreateDateColumn()

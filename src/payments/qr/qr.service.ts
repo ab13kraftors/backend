@@ -15,57 +15,69 @@ import { AccountsService } from 'src/accounts/accounts.service';
 @Injectable()
 export class QrService {
   constructor(
+    // Inject Transaction repository
     @InjectRepository(Transaction)
     private txRepo: Repository<Transaction>,
+
+    // Inject Accounts service for ledger transfer
     private accService: AccountsService,
-    private cas: CasService, // Fixed name
+
+    // Inject CAS service for alias resolution
+    private cas: CasService,
   ) {}
 
-  // Resolve the Merchant via CAS
+  // ================== decode ==================
+  // Decodes QR payload and resolves merchant via CAS
   async decode(qrPayload: string) {
+    // Parse QR payload
     const parsedData = this.parseQrString(qrPayload);
 
+    // Validate alias information
     if (!parsedData.aliasType || !parsedData.aliasValue) {
       throw new BadRequestException('QR missing alias information');
     }
-    // Resolve the Merchant via CAS to get their verified bank account
+
+    // Resolve merchant alias to financial address
     const merchant = await this.cas.resolveAlias(
       parsedData.aliasType,
       parsedData.aliasValue,
     );
 
     return {
-      // Use merchantName directly from the scan as requested
       merchantName: parsedData.merchantName,
-      merchantAccount: merchant.finAddress, // From database
+      merchantAccount: merchant.finAddress,
       amount: parsedData.amount,
       currency: parsedData.currency || 'SLE',
       reference: parsedData.reference,
       qrPayload,
     };
   }
+
+  // ================== process ==================
+  // Processes QR payment transaction
   async process(participantId: string, dto: QrPaymentDto) {
-    // 1. Parse the payload (e.g., from JSON string)
+    // Parse QR payload
     const parsedData = this.parseQrString(dto.qrPayload);
 
-    // 2. Resolve the Merchant (Receiver) via CAS
+    // Resolve merchant alias
     const merchant = await this.cas.resolveAlias(
       parsedData.aliasType,
       parsedData.aliasValue,
     );
 
-    // 3. Logic for Amount & Currency Priority
+    // Determine final payment amount
     const finalAmount = dto.amount || parsedData.amount;
     if (!finalAmount || finalAmount <= 0) {
       throw new BadRequestException('Payment amount required');
     }
 
+    // Determine currency
     const currency = parsedData.currency || dto.currency;
     if (!currency) {
       throw new BadRequestException('Currency required');
     }
 
-    // 4. Create and Save Transaction
+    // Create transaction record
     const tx = this.txRepo.create({
       participantId,
       channel: TransactionType.QR_PAYMENT,
@@ -82,7 +94,7 @@ export class QrService {
     const savedTx = await this.txRepo.save(tx);
 
     try {
-      // Ledger Transfer
+      // Perform ledger transfer
       await this.accService.transfer(
         savedTx.txId,
         savedTx.senderFinAddress,
@@ -90,20 +102,22 @@ export class QrService {
         Number(savedTx.amount),
       );
 
-      // Update status on success
+      // Mark transaction completed
       savedTx.status = TransactionStatus.COMPLETED;
 
       return await this.txRepo.save(savedTx);
     } catch (error) {
-      // Handle failed transfer ( Insufficient Balance)
+      // Mark transaction failed on error
       savedTx.status = TransactionStatus.FAILED;
       await this.txRepo.save(savedTx);
       throw error;
     }
   }
 
+  // ================== createQR ==================
+  // Generates QR code for merchant payments
   async createQR(dto: QrGenerateDto) {
-    // Payload usually contains Merchant Alias and optionally Amount
+    // Construct QR payload
     const payload = JSON.stringify({
       aliasType: dto.aliasType,
       aliasValue: dto.aliasValue,
@@ -113,6 +127,7 @@ export class QrService {
       reference: dto.reference,
     });
 
+    // Generate QR image
     const qrImage = await QRCode.toDataURL(payload);
 
     return {
@@ -122,6 +137,8 @@ export class QrService {
     };
   }
 
+  // ================== parseQrString ==================
+  // Parses QR payload string to JSON
   private parseQrString(payload: string): any {
     try {
       return JSON.parse(payload);

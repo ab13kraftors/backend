@@ -23,13 +23,18 @@ import { AccountsService } from 'src/accounts/accounts.service';
 @Injectable()
 export class BulkService {
   constructor(
+    // Inject repositories
     @InjectRepository(BulkBatch) private batchRepo: Repository<BulkBatch>,
     @InjectRepository(BulkItem) private itemRepo: Repository<BulkItem>,
     @InjectRepository(Transaction) private txRepo: Repository<Transaction>,
+
+    // Inject services
     private accService: AccountsService,
     private cas: CasService,
   ) {}
 
+  // ================== processCSV ==================
+  // Processes CSV bulk payment file
   async processCSV(
     participantId: string,
     debtorBic: string,
@@ -39,7 +44,7 @@ export class BulkService {
   ) {
     if (!file) throw new BadRequestException('CSV file is missing');
 
-    // Initial Batch Creation
+    // Create initial batch record
     const batch = await this.batchRepo.save(
       this.batchRepo.create({
         participantId,
@@ -50,24 +55,35 @@ export class BulkService {
       }),
     );
 
+    // Parse CSV file
     const rows = await this.parseCsv(file.buffer);
+
+    // Validate CSV schema
+    const schemaErrors = this.validateCsvSchema(rows);
+    if (schemaErrors.length > 0) {
+      await this.batchRepo.update(batch.bulkId, { status: BulkStatus.FAILED });
+      throw new BadRequestException(
+        `CSV schema invalid: ${schemaErrors.join('; ')}`,
+      );
+    }
+
     batch.totalRecords = rows.length;
     batch.status = BulkStatus.PROCESSING;
     await this.batchRepo.save(batch);
 
-    // Process each row
+    // Process each CSV row
     for (const row of rows) {
       const aliasType: AliasType =
         (row.aliasType as AliasType) ?? AliasType.MSISDN;
 
       try {
-        // Resolve Alias
+        // Resolve receiver alias to FIN address
         const receiver = await this.cas.resolveAlias(
           aliasType,
           row.receiverAlias,
         );
 
-        // Create Transaction
+        // Create transaction record
         const tx = await this.txRepo.save(
           this.txRepo.create({
             participantId,
@@ -83,8 +99,8 @@ export class BulkService {
           }),
         );
 
-        // Ledger Transfer
         try {
+          // Perform ledger transfer
           await this.accService.transfer(
             tx.txId,
             tx.senderFinAddress,
@@ -92,11 +108,11 @@ export class BulkService {
             Number(tx.amount),
           );
 
-          // Update Transaction to COMPLETED
+          // Mark transaction completed
           tx.status = TransactionStatus.COMPLETED;
           await this.txRepo.save(tx);
 
-          // Record Item Success
+          // Record successful item
           await this.itemRepo.save(
             this.itemRepo.create({
               bulkId: batch.bulkId,
@@ -107,17 +123,17 @@ export class BulkService {
               status: ItemStatus.SUCCESS,
             }),
           );
+
           batch.processedRecords++;
         } catch (transferError) {
-          // Handle specific ledger failure (e.g., Insufficient Funds)
+          // Mark transaction failed if ledger transfer fails
           tx.status = TransactionStatus.FAILED;
           await this.txRepo.save(tx);
 
-          // Re-throw to catch block below to log item failure
           throw new Error(`Ledger Transfer Failed: ${transferError.message}`);
         }
       } catch (error) {
-        // Log failure and CONTINUE loop
+        // Record failed item and continue processing
         await this.itemRepo.save(
           this.itemRepo.create({
             bulkId: batch.bulkId,
@@ -129,11 +145,12 @@ export class BulkService {
             errorMessage: error.message,
           }),
         );
+
         batch.failedRecords++;
       }
     }
 
-    // 3. Finalize Batch Status
+    // Determine final batch status
     if (batch.failedRecords === 0) {
       batch.status = BulkStatus.COMPLETED;
     } else if (batch.processedRecords === 0) {
@@ -143,6 +160,7 @@ export class BulkService {
     }
 
     await this.batchRepo.save(batch);
+
     return {
       bulkId: batch.bulkId,
       status: batch.status,
@@ -151,9 +169,43 @@ export class BulkService {
     };
   }
 
+  // ================== validateCsvSchema ==================
+  // Validates CSV required fields and data format
+  private validateCsvSchema(rows: any[]): string[] {
+    if (!rows || rows.length === 0) return ['CSV file is empty'];
+
+    const errors: string[] = [];
+
+    rows.forEach((row, i) => {
+      const rowNum = i + 2; // account for header row
+
+      // Check required fields
+      for (const field of ['senderAlias', 'receiverAlias', 'amount']) {
+        if (!row[field] || String(row[field]).trim() === '') {
+          errors.push(`Row ${rowNum}: missing required field '${field}'`);
+        }
+      }
+
+      // Validate amount
+      if (
+        row.amount &&
+        (isNaN(Number(row.amount)) || Number(row.amount) <= 0)
+      ) {
+        errors.push(
+          `Row ${rowNum}: 'amount' must be a positive number, got '${row.amount}'`,
+        );
+      }
+    });
+
+    return errors;
+  }
+
+  // ================== parseCsv ==================
+  // Converts CSV buffer into JSON rows
   private parseCsv(buffer: Buffer): Promise<any[]> {
     return new Promise((resolve, reject) => {
       const rows: any[] = [];
+
       Readable.from(buffer)
         .pipe(csv())
         .on('data', (data) => rows.push(data))
@@ -162,17 +214,22 @@ export class BulkService {
     });
   }
 
+  // ================== findAll ==================
+  // Returns all bulk batches for a participant
   async findAll(participantId: string) {
-    // FIX: scope by participantId
     return this.batchRepo.find({
       where: { participantId },
       order: { createdAt: 'DESC' },
     });
   }
 
+  // ================== findOne ==================
+  // Returns a specific bulk batch
   async findOne(bulkId: string) {
     const batch = await this.batchRepo.findOne({ where: { bulkId } });
+
     if (!batch) throw new NotFoundException(`Batch ${bulkId} not found`);
+
     return batch;
   }
 }

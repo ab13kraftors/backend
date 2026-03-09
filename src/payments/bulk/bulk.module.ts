@@ -10,10 +10,9 @@ import { AccountsModule } from 'src/accounts/accounts.module';
 
 @Module({
   imports: [
-    // Register the entities specifically for this module context
     TypeOrmModule.forFeature([BulkBatch, BulkItem, Transaction]),
     CasModule,
-    AccountsModule, // Required because BulkService uses CasService
+    AccountsModule,
   ],
   controllers: [BulkController],
   providers: [BulkService],
