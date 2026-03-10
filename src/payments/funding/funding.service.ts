@@ -6,7 +6,7 @@ import { FundingWallet } from './entities/funding.entity';
 import { Wallet } from 'src/wallet/entities/wallet.entity';
 import { FundingWalletDto } from './dto/fund-wallet.dto';
 import { TransactionStatus } from 'src/common/enums/transaction.enums';
-import { AccountsService } from 'src/accounts/accounts.service';
+import { LedgerService } from 'src/ledger/ledger.service';
 
 @Injectable()
 export class FundingService {
@@ -23,7 +23,7 @@ export class FundingService {
     private walletRepo: Repository<Wallet>,
 
     // Inject Accounts service for ledger transfers
-    private readonly accService: AccountsService,
+    private readonly ledgerService: LedgerService,
   ) {}
 
   // ================== fundingWallet ==================
@@ -42,25 +42,34 @@ export class FundingService {
       this.fundingRepo.create({
         ...dto,
         participantId,
-        status: TransactionStatus.COMPLETED, // funding immediately completed
+        status: TransactionStatus.INITIATED,
       }),
     );
 
     // Move funds in ledger (System → Wallet)
-    await this.accService.transfer(
-      `FUND-${funding.fundingId}`,
-      this.SYSTEM_POOL_FIN,
-      wallet.finAddress,
-      dto.amount,
-    );
-
-    // Update wallet balance
-    wallet.balance = Number(wallet.balance) + Number(dto.amount);
-    await this.walletRepo.save(wallet);
+    await this.ledgerService.postTransfer({
+      txId: `FUND-${funding.fundingId}`,
+      reference: `Wallet funding for ${dto.walletId}`,
+      participantId,
+      postedBy: 'system',
+      legs: [
+        {
+          finAddress: this.SYSTEM_POOL_FIN,
+          amount: String(dto.amount),
+          isCredit: true, // DEBIT — money leaving system pool
+          memo: `Funding wallet ${dto.walletId}`,
+        },
+        {
+          finAddress: wallet.finAddress,
+          amount: String(dto.amount),
+          isCredit: false, // CREDIT — money arriving at wallet
+          memo: `Funded from system pool`,
+        },
+      ],
+    });
 
     return {
       fundingId: funding.fundingId,
-      walletBalance: wallet.balance,
       status: funding.status,
     };
   }

@@ -5,15 +5,16 @@ import { Repository } from 'typeorm';
 import { Participant } from './entities/participant.entity';
 import * as bcrypt from 'bcrypt';
 import { LoginDto } from './dto/login.dto';
+import { CustomerService } from 'src/customer/customer.service';
+import { OtpService } from 'src/otp/otp.service';
 
-// FIX C1: real login — validates credentials against DB with bcrypt
 @Injectable()
 export class AuthService {
   constructor(
-    // Inject JWT service for token generation
     private readonly jwtService: JwtService,
+    private readonly customerService: CustomerService,
+    private readonly otpService: OtpService,
 
-    // Inject Participant repository
     @InjectRepository(Participant)
     private readonly participantRepo: Repository<Participant>,
   ) {}
@@ -56,3 +57,7 @@ export class AuthService {
     return payload;
   }
 }
+
+/*
+
+*/

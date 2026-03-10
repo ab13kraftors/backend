@@ -10,12 +10,11 @@ import { Repository } from 'typeorm';
 import { Transaction } from '../entities/transaction.entity';
 import { CasService } from 'src/cas/cas.service';
 import { RtpStatus } from 'src/common/enums/rtp.enums';
-import { AliasType } from 'src/common/enums/alias.enums';
 import {
   TransactionStatus,
   TransactionType,
 } from 'src/common/enums/transaction.enums';
-import { AccountsService } from 'src/accounts/accounts.service';
+import { LedgerService } from 'src/ledger/ledger.service';
 
 @Injectable()
 export class RtpService {
@@ -29,8 +28,8 @@ export class RtpService {
     // Inject Transaction repository
     @InjectRepository(Transaction) private txRepo: Repository<Transaction>,
 
-    // Inject Accounts service for ledger transfers
-    private accService: AccountsService,
+    // Inject Ledger service for ledger transfers
+    private ledgerService: LedgerService,
 
     // Inject CAS service for alias resolution
     private cas: CasService,
@@ -97,12 +96,26 @@ export class RtpService {
 
     try {
       // Perform ledger transfer
-      await this.accService.transfer(
-        savedTx.txId,
-        savedTx.senderFinAddress,
-        savedTx.receiverFinAddress,
-        Number(savedTx.amount),
-      );
+      await this.ledgerService.postTransfer({
+        txId: savedTx.txId,
+        reference: savedTx.reference ?? `RTP-${rtpMsgId}`,
+        participantId: rtp.participantId,
+        postedBy: 'system',
+        legs: [
+          {
+            finAddress: savedTx.senderFinAddress,
+            amount: String(savedTx.amount),
+            isCredit: true, // DEBIT — money leaving payer
+            memo: `RTP payment to ${savedTx.receiverAlias}`,
+          },
+          {
+            finAddress: savedTx.receiverFinAddress,
+            amount: String(savedTx.amount),
+            isCredit: false, // CREDIT — money arriving at requester
+            memo: `RTP payment from ${savedTx.senderAlias}`,
+          },
+        ],
+      });
 
       // Update transaction status
       savedTx.status = TransactionStatus.COMPLETED;

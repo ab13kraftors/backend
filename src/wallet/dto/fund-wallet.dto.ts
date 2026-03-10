@@ -1,18 +1,12 @@
-import {
-  IsNumber,
-  IsPositive,
-  IsString,
-  Length,
-  Matches,
-} from 'class-validator';
+import { IsString, Length, Matches } from 'class-validator';
 
 export class FundWalletDto {
   @IsString()
   walletId: string;
 
-  @IsNumber()
-  @IsPositive()
-  amount: number;
+  @IsString()
+  @Matches(/^\d+(\.\d{1,2})?$/)
+  amount: string;
 
   @IsString()
   @Length(6, 6)

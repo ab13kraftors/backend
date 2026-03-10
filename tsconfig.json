@@ -13,46 +13,19 @@
     "target": "ES2023",
     "sourceMap": true,
     "outDir": "./dist",
-    "baseUrl": "./",
+    "baseUrl": "./", // keep or change to "./src" (see note below)
     "incremental": true,
     "skipLibCheck": true,
     "strictNullChecks": true,
     "forceConsistentCasingInFileNames": true,
     "noImplicitAny": false,
     "strictBindCallApply": false,
-    "noFallthroughCasesInSwitch": false
+    "noFallthroughCasesInSwitch": false,
+
+    // Add this block (recommended for clarity)
+    "paths": {
+      "src/*": ["src/*"]
+    }
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts"]
 }
-
-// {
-//   "compilerOptions": {
-//     "module": "commonjs",
-//     "moduleResolution": "node",
-//     "target": "ES2021",
-
-//     "esModuleInterop": true,
-//     "allowSyntheticDefaultImports": true,
-
-//     "experimentalDecorators": true,
-//     "emitDecoratorMetadata": true,
-
-//     "declaration": true,
-//     "removeComments": true,
-//     "sourceMap": true,
-
-//     "outDir": "./dist",
-//     "baseUrl": "./",
-
-//     "incremental": true,
-//     "skipLibCheck": true,
-
-//     "strictNullChecks": true,
-//     "forceConsistentCasingInFileNames": true,
-
-//     "noImplicitAny": false,
-//     "strictBindCallApply": false,
-//     "noFallthroughCasesInSwitch": false
-//   },
-//   "include": ["src/**/*.ts", "src/**/*.d.ts"]
-// }

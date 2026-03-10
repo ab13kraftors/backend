@@ -18,7 +18,7 @@ import {
   TransactionStatus,
   TransactionType,
 } from 'src/common/enums/transaction.enums';
-import { AccountsService } from 'src/accounts/accounts.service';
+import { LedgerService } from 'src/ledger/ledger.service';
 
 @Injectable()
 export class BulkService {
@@ -29,8 +29,8 @@ export class BulkService {
     @InjectRepository(Transaction) private txRepo: Repository<Transaction>,
 
     // Inject services
-    private accService: AccountsService,
     private cas: CasService,
+    private ledgerService: LedgerService,
   ) {}
 
   // ================== processCSV ==================
@@ -101,12 +101,26 @@ export class BulkService {
 
         try {
           // Perform ledger transfer
-          await this.accService.transfer(
-            tx.txId,
-            tx.senderFinAddress,
-            tx.receiverFinAddress,
-            Number(tx.amount),
-          );
+          await this.ledgerService.postTransfer({
+            txId: tx.txId,
+            reference: `BULK-${batch.bulkId}`,
+            participantId,
+            postedBy: 'system',
+            legs: [
+              {
+                finAddress: tx.senderFinAddress,
+                amount: String(tx.amount),
+                isCredit: true, // DEBIT leg — money leaving sender
+                memo: `Bulk payment to ${tx.receiverAlias}`,
+              },
+              {
+                finAddress: tx.receiverFinAddress,
+                amount: String(tx.amount),
+                isCredit: false, // CREDIT leg — money arriving at receiver
+                memo: `Bulk payment from ${tx.senderAlias}`,
+              },
+            ],
+          });
 
           // Mark transaction completed
           tx.status = TransactionStatus.COMPLETED;

@@ -7,6 +7,8 @@ import { ConfigService } from '@nestjs/config';
 import { JwtStrategy } from './jwt.strategy';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Participant } from './entities/participant.entity';
+import { OtpModule } from 'src/otp/otp.module';
+import { CustomerModule } from 'src/customer/customer.module';
 
 @Module({
   imports: [
@@ -21,6 +23,8 @@ import { Participant } from './entities/participant.entity';
         return { secret, signOptions: { expiresIn: '15m' } };
       },
     }),
+    OtpModule,
+    CustomerModule,
   ],
   providers: [AuthService, JwtStrategy],
   controllers: [AuthController],

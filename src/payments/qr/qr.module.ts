@@ -4,10 +4,10 @@ import { QrService } from './qr.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Transaction } from '../entities/transaction.entity';
 import { CasModule } from 'src/cas/cas.module';
-import { AccountsModule } from 'src/accounts/accounts.module';
+import { LedgerModule } from 'src/ledger/ledger.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Transaction]), CasModule, AccountsModule],
+  imports: [TypeOrmModule.forFeature([Transaction]), CasModule, LedgerModule],
   controllers: [QrController],
   providers: [QrService],
 })

@@ -2,161 +2,149 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  ForbiddenException,
+  forwardRef,
+  Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Account } from './entities/account.entity';
 import { Repository } from 'typeorm';
-import { LedgerEntry } from './entities/ledger.entity';
-import { DataSource } from 'typeorm';
-import { CrDbType, Currency } from 'src/common/enums/transaction.enums';
+import { Account, AccountStatus } from './entities/account.entity';
 import { CreateAccountDto } from './dto/create-account.dto';
+import { Currency } from 'src/common/enums/transaction.enums';
+import { LedgerService } from 'src/ledger/ledger.service';
+import { KycService } from 'src/kyc/kyc.service';
+import { ComplianceService } from 'src/compliance/compliance.service';
+import Decimal from 'decimal.js';
 
 @Injectable()
 export class AccountsService {
   constructor(
-    // Inject Account repository
-    @InjectRepository(Account) private accRepo: Repository<Account>,
-    // Inject Ledger repository
-    @InjectRepository(LedgerEntry) private ledRepo: Repository<LedgerEntry>,
-    // Inject TypeORM datasource for transactions
-    private dataSource: DataSource,
+    @InjectRepository(Account)
+    private accountRepo: Repository<Account>,
+
+    @Inject(forwardRef(() => LedgerService))
+    private ledgerService: LedgerService,
+
+    private kycService: KycService,
+    private complianceService: ComplianceService, // BSL audit
   ) {}
 
-  // ================== ensureSystemAccount ==================
-  // Ensures a system internal account exists for platform operations
-  async ensureSystemAccount() {
-    const existing = await this.accRepo.findOne({
-      where: { finAddress: 'SYSTEM_INTERNAL' },
-    });
+  /**
+   * Create ledger account for authenticated participant
+   */
+  async create(participantId: string, dto: CreateAccountDto): Promise<Account> {
+    // // AML Screening (BSL mandatory)
+    // const kycTier = await this.kycService.getTierByParticipant(participantId);
+    // if (kycTier === KycTier.NONE || kycTier === KycTier.HARD_REJECTED) {
+    //   throw new ForbiddenException('KYC approval required (BSL compliance)');
+    // }
 
-    // Create system account if it does not exist
-    if (!existing) {
-      await this.accRepo.save(
-        this.accRepo.create({
-          finAddress: 'SYSTEM_INTERNAL',
-          participantId: 'SYSTEM',
-          balance: 999_999_999, // large float pool for testing
-          currency: Currency.SLE,
-        }),
-      );
-    }
-  }
-
-  // ================== createAccount ==================
-  // Creates a new account for a participant
-  async create(participantId: string, dto: CreateAccountDto) {
-    const existing = await this.accRepo.findOne({
+    // 1. Check uniqueness
+    const existing = await this.accountRepo.findOne({
       where: { finAddress: dto.finAddress },
     });
+    if (existing) {
+      if (existing.participantId === participantId) {
+        throw new BadRequestException('You already own this FIN address');
+      }
+      throw new BadRequestException('FIN address already in use');
+    }
 
-    // Prevent duplicate account creation
-    if (existing) throw new BadRequestException('Account already exists');
-
-    const newAcc = this.accRepo.create({
-      ...dto,
+    // 2. Create
+    const account = this.accountRepo.create({
+      finAddress: dto.finAddress,
       participantId,
+      currency: dto.currency,
+      status: AccountStatus.ACTIVE,
+      // kycTier, // Bank-grade: Link tier for limits
     });
 
-    // Save account to database
-    return this.accRepo.save(newAcc);
+    const saved = await this.accountRepo.save(account);
+
+    // Audit (BSL)
+    // await this.complianceService.log('account_create', participantId, participantId, { finAddress: dto.finAddress });
+
+    return saved;
   }
 
-  // ================== getByFinAddress ==================
-  // Fetch account details using FIN address
+  /**
+   * Get account by FIN address (public view - no sensitive data)
+   */
   async getByFinAddress(finAddress: string) {
-    const account = await this.accRepo.findOne({
+    const account = await this.accountRepo.findOne({
       where: { finAddress },
+      select: ['accountId', 'finAddress', 'currency', 'status', 'createdAt'],
     });
 
-    // Throw error if account not found
-    if (!account) throw new NotFoundException('Account does not exists');
+    if (!account) {
+      throw new NotFoundException(`Account not found: ${finAddress}`);
+    }
 
     return account;
   }
 
-  // ================== transfer ==================
-  // Transfers money between two accounts with ledger recording
-  async transfer(
-    txId: string,
-    senderFin: string,
-    receiverFin: string,
-    amount: number,
-  ) {
-    // Execute transfer in DB transaction for atomicity
-    return this.dataSource.transaction(async (manager) => {
-      const sender = await manager.findOne(Account, {
-        where: { finAddress: senderFin },
-      });
-      const receiver = await manager.findOne(Account, {
-        where: { finAddress: receiverFin },
-      });
-
-      // Validate sender and receiver accounts
-      if (!sender)
-        throw new NotFoundException('Account does not exists of sender');
-      if (!receiver)
-        throw new NotFoundException('Account does not exists of receiver');
-
-      // Ensure sender has sufficient balance
-      if (Number(sender.balance) < amount)
-        throw new BadRequestException(
-          `Insufficient balance. Available balance is ${sender.balance}`,
-        );
-
-      // Debit sender and credit receiver
-      sender.balance = Number(sender.balance) - amount;
-      receiver.balance = Number(receiver.balance) + amount;
-
-      // Persist updated balances
-      await manager.save(sender);
-      await manager.save(receiver);
-
-      // Record debit entry in ledger
-      await manager.save(LedgerEntry, {
-        accountId: sender.accountId,
-        txId,
-        type: CrDbType.DEBIT,
-        amount,
-      });
-
-      // Record credit entry in ledger
-      await manager.save(LedgerEntry, {
-        accountId: receiver.accountId,
-        txId,
-        type: CrDbType.CREDIT,
-        amount,
-      });
-
-      // Return updated balances
-      return {
-        senderBalance: sender.balance,
-        receiverBalance: receiver.balance,
-      };
-    });
-  }
-
-  // ================== getAll ==================
-  // Returns all accounts belonging to a participant
+  /**
+   * Get all accounts owned by participant
+   */
   async getAll(participantId: string) {
-    return this.accRepo.find({
+    return this.accountRepo.find({
       where: { participantId },
+      select: ['accountId', 'finAddress', 'currency', 'status', 'createdAt'],
       order: { createdAt: 'DESC' },
     });
   }
 
-  // ================== deleteAccount ==================
-  // Deletes an account (allowed for bank/owner only)
-  async delete(accountId: string, participantId: string) {
-    const account = await this.accRepo.findOne({
-      where: { accountId, participantId },
+  /**
+   * Soft-delete / close account (only owner or admin)
+   */
+  async close(accountId: string, participantId: string, reason?: string) {
+    const account = await this.accountRepo.findOne({
+      where: { accountId },
     });
 
-    // Validate account existence
     if (!account) throw new NotFoundException('Account not found');
 
-    // Remove account from database
-    await this.accRepo.remove(account);
+    if (account.participantId !== participantId)
+      throw new ForbiddenException('You do not own this account');
 
-    return { message: `Account ${accountId} deleted successfully` };
+    if (account.status === AccountStatus.CLOSED)
+      throw new BadRequestException('Account already closed');
+
+    // TODO: Check balance == 0 before closing (ledger query)
+    // BSL: Zero balance + reconciliation
+    const balance = new Decimal(
+      await this.ledgerService.getDerivedBalance(account.finAddress),
+    );
+    if (balance.gt(0))
+      throw new BadRequestException(
+        `Balance ${balance.toFixed(2)} SLE must be zero`,
+      );
+
+    account.status = AccountStatus.CLOSED;
+    // account.closedAt = new Date();
+    // account.closeReason = reason;
+
+    return this.accountRepo.save(account);
+  }
+
+  /**
+   * Called at startup - ensure system accounts exist
+   */
+  async ensureSystemAccounts() {
+    const systemFin = 'SYSTEM_INTERNAL';
+
+    let systemAcc = await this.accountRepo.findOne({
+      where: { finAddress: systemFin },
+    });
+
+    if (!systemAcc) {
+      systemAcc = this.accountRepo.create({
+        finAddress: systemFin,
+        participantId: 'SYSTEM',
+        currency: Currency.SLE,
+        status: AccountStatus.ACTIVE,
+      });
+      await this.accountRepo.save(systemAcc);
+    }
   }
 }

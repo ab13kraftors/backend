@@ -15,6 +15,7 @@ import { AccountsModule } from 'src/accounts/accounts.module';
 import { TransactionModule } from './transaction/transaction.module';
 import { VerifyModule } from './verify/verify.module';
 import { FundingModule } from './funding/funding.module';
+import { LedgerModule } from 'src/ledger/ledger.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { FundingModule } from './funding/funding.module';
     TransactionModule,
     VerifyModule,
     FundingModule,
+    LedgerModule,
   ],
   controllers: [CreditTransferController],
   providers: [PaymentsService, CreditTransferService],

@@ -10,7 +10,7 @@ import {
 } from 'src/common/enums/transaction.enums';
 import * as QRCode from 'qrcode';
 import { CasService } from 'src/cas/cas.service';
-import { AccountsService } from 'src/accounts/accounts.service';
+import { LedgerService } from 'src/ledger/ledger.service';
 
 @Injectable()
 export class QrService {
@@ -20,7 +20,7 @@ export class QrService {
     private txRepo: Repository<Transaction>,
 
     // Inject Accounts service for ledger transfer
-    private accService: AccountsService,
+    private ledgerService: LedgerService,
 
     // Inject CAS service for alias resolution
     private cas: CasService,
@@ -95,12 +95,26 @@ export class QrService {
 
     try {
       // Perform ledger transfer
-      await this.accService.transfer(
-        savedTx.txId,
-        savedTx.senderFinAddress,
-        savedTx.receiverFinAddress,
-        Number(savedTx.amount),
-      );
+      await this.ledgerService.postTransfer({
+        txId: savedTx.txId,
+        reference: savedTx.reference ?? `QR-${savedTx.txId}`,
+        participantId,
+        postedBy: 'system',
+        legs: [
+          {
+            finAddress: savedTx.senderFinAddress,
+            amount: String(savedTx.amount),
+            isCredit: true, // DEBIT — money leaving sender
+            memo: `QR payment to ${savedTx.receiverAlias}`,
+          },
+          {
+            finAddress: savedTx.receiverFinAddress,
+            amount: String(savedTx.amount),
+            isCredit: false, // CREDIT — money arriving at merchant
+            memo: `QR payment from ${savedTx.senderAlias}`,
+          },
+        ],
+      });
 
       // Mark transaction completed
       savedTx.status = TransactionStatus.COMPLETED;

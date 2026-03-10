@@ -1,24 +1,32 @@
 import {
-  IsNumber,
-  IsPositive,
+  IsOptional,
   IsString,
   Length,
   Matches,
+  IsNotEmpty,
 } from 'class-validator';
 
 export class TransferWalletDto {
   @IsString()
-  senderWalletId: string; // sender identifies by their own walletId
+  @IsNotEmpty()
+  senderWalletId: string;
 
   @IsString()
-  receiverFinAddress: string; // receiver identified by finAddress (WALLET-{uuid})
+  @IsNotEmpty()
+  receiverFinAddress: string;
 
-  @IsNumber()
-  @IsPositive()
-  amount: number;
+  @IsString()
+  @Matches(/^\d+(\.\d{1,2})?$/, {
+    message: 'amount must be a positive number with up to 2 decimal places',
+  })
+  amount: string;
 
   @IsString()
   @Length(6, 6)
   @Matches(/^\d{6}$/)
   pin: string;
+
+  @IsString()
+  @IsOptional()
+  idempotencyKey?: string;
 }

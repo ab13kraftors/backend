@@ -6,6 +6,8 @@ import { CustomerService } from 'src/customer/customer.service';
 import { CustomerStatus } from 'src/common/enums/customer.enums';
 import { CronExpression } from '@nestjs/schedule';
 import { Cron } from '@nestjs/schedule';
+import { SmsService } from 'src/common/sms/sms.service';
+import { EmailService } from 'src/common/email/email.service';
 
 @Injectable()
 export class OtpService {
@@ -19,13 +21,22 @@ export class OtpService {
 
     // Inject Customer service
     private readonly customerService: CustomerService,
+
+    private readonly smsService: SmsService,
+    private readonly emailService: EmailService,
   ) {}
 
   // ================== generate ==================
   // Generates OTP for customer verification
   async generate(participantId: string, ccuuid: string) {
     // Ensure customer exists
-    await this.customerService.findOne(ccuuid, participantId);
+    const customer = await this.customerService.findOne(ccuuid, participantId);
+
+    if (!customer.firstEmail) {
+      throw new BadRequestException(
+        'Customer does not have a registered email address.',
+      );
+    }
 
     // Remove any previous OTP
     await this.otpRepo.delete({ participantId, ccuuid });
@@ -41,9 +52,20 @@ export class OtpService {
       expiresAt: new Date(Date.now() + 5 * 60 * 1000),
     });
 
-    // TODO: send OTP via SMS/email instead of returning in API
+    const saved = await this.otpRepo.save(otp);
 
-    return this.otpRepo.save(otp);
+    // Deliver OTP to customer registered msisdn
+    // await this.smsService.sendOtp(customer.msisdn, otpCode);
+    // Deliver OTP to customer registered email instead of MSISDN
+    await this.emailService.sendOtp(customer.firstEmail, otpCode);
+
+    // Never return otpCode in response
+    return {
+      uuid: saved.uuid,
+      ccuuid: saved.ccuuid,
+      expiresAt: saved.expiresAt,
+      message: 'OTP sent to registered mobile number',
+    };
   }
 
   // ================== complete ==================

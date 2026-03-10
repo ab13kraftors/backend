@@ -19,6 +19,10 @@ import { CasModule } from './cas/cas.module';
 import { AccountsModule } from './accounts/accounts.module';
 import { WalletModule } from './wallet/wallet.module';
 import { ParticipantGuard } from './common/guards/participant/participant.guard';
+import { EmailModule } from './common/email/email.module';
+import { KycModule } from './kyc/kyc.module';
+import { LedgerModule } from './ledger/ledger.module';
+import { ComplianceModule } from './compliance/compliance.module';
 
 @Module({
   imports: [
@@ -44,6 +48,10 @@ import { ParticipantGuard } from './common/guards/participant/participant.guard'
     CasModule,
     AccountsModule,
     WalletModule,
+    EmailModule,
+    KycModule,
+    LedgerModule,
+    ComplianceModule,
   ],
   controllers: [AppController],
   providers: [

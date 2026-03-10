@@ -5,13 +5,13 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Transaction } from '../entities/transaction.entity';
 import { CasModule } from 'src/cas/cas.module';
 import { RTP } from '../entities/rtp.entity';
-import { AccountsModule } from 'src/accounts/accounts.module';
+import { LedgerModule } from 'src/ledger/ledger.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Transaction, RTP]),
     CasModule,
-    AccountsModule,
+    LedgerModule,
   ],
   controllers: [RtpController],
   providers: [RtpService],

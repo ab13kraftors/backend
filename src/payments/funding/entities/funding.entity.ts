@@ -30,7 +30,6 @@ export class FundingWallet {
   @Column({ type: 'enum', enum: Currency, default: Currency.SLE })
   currency: Currency;
 
-  @Column({ type: 'enum', enum: Currency, default: Currency.SLE })
   @Column({
     type: 'enum',
     enum: TransactionStatus,

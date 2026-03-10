@@ -9,7 +9,8 @@ import {
   TransactionStatus,
   TransactionType,
 } from 'src/common/enums/transaction.enums';
-import { AccountsService } from 'src/accounts/accounts.service';
+
+import { LedgerService } from 'src/ledger/ledger.service';
 
 @Injectable()
 export class CreditTransferService {
@@ -20,8 +21,8 @@ export class CreditTransferService {
     // Inject CAS service for alias resolution
     private casService: CasService,
 
-    // Inject Accounts service for ledger transfers
-    private accService: AccountsService,
+    // Inject Ledger service for ledger transfers
+    private ledgerService: LedgerService,
 
     // Inject Payments service (orchestration layer)
     private paymentsService: PaymentsService,
@@ -59,13 +60,26 @@ export class CreditTransferService {
     const savedTx = await this.txRepo.save(tx);
 
     try {
-      // Perform ledger transfer
-      await this.accService.transfer(
-        savedTx.txId,
-        savedTx.senderFinAddress,
-        savedTx.receiverFinAddress,
-        Number(savedTx.amount),
-      );
+      await this.ledgerService.postTransfer({
+        txId: savedTx.txId,
+        reference: savedTx.reference ?? `CT-${savedTx.txId}`,
+        participantId,
+        postedBy: 'system',
+        legs: [
+          {
+            finAddress: savedTx.senderFinAddress,
+            amount: String(savedTx.amount),
+            isCredit: true, // DEBIT — money leaving sender
+            memo: `Credit transfer to ${savedTx.receiverAlias}`,
+          },
+          {
+            finAddress: savedTx.receiverFinAddress,
+            amount: String(savedTx.amount),
+            isCredit: false, // CREDIT — money arriving at receiver
+            memo: `Credit transfer from ${savedTx.senderAlias}`,
+          },
+        ],
+      });
 
       // Mark transaction completed
       savedTx.status = TransactionStatus.COMPLETED;

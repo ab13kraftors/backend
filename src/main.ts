@@ -94,7 +94,7 @@ async function bootstrap() {
   );
 
   const accountsService = app.get(AccountsService);
-  await accountsService.ensureSystemAccount();
+  await accountsService.ensureSystemAccounts();
 
   await app.listen(process.env.PORT ?? 3000);
 }
