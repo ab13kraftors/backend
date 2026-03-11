@@ -70,7 +70,7 @@ export class FundingService {
 
     return {
       fundingId: funding.fundingId,
-      status: funding.status,
+      status: TransactionStatus.COMPLETED,
     };
   }
 }

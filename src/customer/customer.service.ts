@@ -233,7 +233,7 @@ export class CustomerService {
 
       await manager.save(fin);
 
-      // Create Wallet
+      // Create Wallet- use manager
       const wallet = await this.walletService.createWallet(
         savedCustomer.uuid,
         participantId,

@@ -34,7 +34,7 @@ export class Wallet {
   @Column({ default: 0 })
   pinAttempts: number;
 
-  @Column({ type: 'enum', enum: WalletStatus, default: WalletStatus.ACTIVE })
+  @Column({ type: 'enum', enum: WalletStatus, default: WalletStatus.INACTIVE })
   status: WalletStatus;
 
   @OneToOne(() => Account, (account) => account.wallet, { nullable: true })

@@ -1,4 +1,12 @@
-import { IsArray, IsEnum, IsNotEmpty, IsOptional, IsString, Matches, ValidateNested } from 'class-validator';
+import {
+  IsBoolean,
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { Currency } from 'src/common/enums/transaction.enums';
 
@@ -13,8 +21,10 @@ export class TransferLegDto {
   })
   amount: string;
 
-  @IsEnum(['DEBIT', 'CREDIT'], { message: 'isCredit must be true (DEBIT) or false (CREDIT)' })
-  isCredit: boolean;  // true = money leaving (DEBIT), false = money arriving (CREDIT)
+  @IsBoolean({
+    message: 'isCredit must be true (DEBIT) or false (CREDIT)',
+  })
+  isCredit: boolean; // true = money leaving (DEBIT), false = money arriving (CREDIT)
 
   @IsString()
   @IsOptional()

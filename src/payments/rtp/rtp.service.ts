@@ -44,7 +44,7 @@ export class RtpService {
     const rtp = this.rtpRepo.create({
       ...dto,
       participantId,
-      requesterAliasTypes: dto.requesterAliasType,
+      requesterAliasType: dto.requesterAliasType,
       status: RtpStatus.PENDING,
       expiresAt: new Date(Date.now() + expiryMs),
     });

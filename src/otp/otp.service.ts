@@ -64,7 +64,7 @@ export class OtpService {
       uuid: saved.uuid,
       ccuuid: saved.ccuuid,
       expiresAt: saved.expiresAt,
-      message: 'OTP sent to registered mobile number',
+      message: 'OTP sent to registered email/msisdn',
     };
   }
 

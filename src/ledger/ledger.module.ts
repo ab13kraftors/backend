@@ -4,6 +4,7 @@ import { LedgerJournal } from './entities/ledger-journal.entity';
 import { LedgerPosting } from './entities/ledger-posting.entity';
 import { LedgerService } from './ledger.service';
 import { AccountsModule } from 'src/accounts/accounts.module';
+import { LedgerController } from './ledger.controller';
 
 @Module({
   imports: [
@@ -11,6 +12,7 @@ import { AccountsModule } from 'src/accounts/accounts.module';
     forwardRef(() => AccountsModule),
   ],
   providers: [LedgerService],
+  controllers: [LedgerController],
   exports: [LedgerService],
 })
 export class LedgerModule {}

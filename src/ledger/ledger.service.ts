@@ -15,6 +15,7 @@ import { Account } from '../accounts/entities/account.entity';
 import { LedgerTransferInput, LedgerTransferResult } from './ledger.types';
 import { Currency } from 'src/common/enums/transaction.enums';
 import { AccountsService } from 'src/accounts/accounts.service';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class LedgerService {

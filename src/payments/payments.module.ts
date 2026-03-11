@@ -29,8 +29,8 @@ import { LedgerModule } from 'src/ledger/ledger.module';
     VerifyModule,
     FundingModule,
     LedgerModule,
+    CreditTransferController,
   ],
-  controllers: [CreditTransferController],
   providers: [PaymentsService, CreditTransferService],
   exports: [PaymentsService, TypeOrmModule],
 })
