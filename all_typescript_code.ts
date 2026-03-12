@@ -52,6 +52,10 @@ import { EmailModule } from './common/email/email.module';
 import { KycModule } from './kyc/kyc.module';
 import { LedgerModule } from './ledger/ledger.module';
 import { ComplianceModule } from './compliance/compliance.module';
+// import { RolesGuard } from './common/guards/auth/roles.gaurd';
+import { CardModule } from './card/card.module';
+import { LoadModule } from './load/load.module';
+import { WithdrawModule } from './withdraw/withdraw.module';
 
 @Module({
   imports: [
@@ -81,6 +85,9 @@ import { ComplianceModule } from './compliance/compliance.module';
     KycModule,
     LedgerModule,
     ComplianceModule,
+    CardModule,
+    LoadModule,
+    WithdrawModule,
   ],
   controllers: [AppController],
   providers: [
@@ -94,6 +101,10 @@ import { ComplianceModule } from './compliance/compliance.module';
       provide: APP_GUARD,
       useClass: ParticipantGuard,
     },
+    //     {
+    //   provide: APP_GUARD,
+    //   useClass: RolesGuard,
+    // },
     {
       provide: APP_INTERCEPTOR,
       useClass: EncryptionInterceptor,
@@ -363,7 +374,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Customer } from './entities/customer.entity';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CustomerStatus, CustomerType } from 'src/common/enums/customer.enums';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
@@ -380,14 +391,9 @@ import { WalletService } from 'src/wallet/wallet.service';
 @Injectable()
 export class CustomerService {
   constructor(
-    // Inject datasource for DB transactions
     private readonly dataSource: DataSource,
-
-    // Inject Customer repository
     @InjectRepository(Customer)
     private customerRepository: Repository<Customer>,
-
-    // Inject Wallet service
     private walletService: WalletService,
   ) {}
 
@@ -397,32 +403,38 @@ export class CustomerService {
     dto: CreateCustomerDto,
     participantId: string,
   ): Promise<Customer> {
-    const existing = await this.customerRepository.findOne({
-      where: { externalId: dto.externalId, participantId },
+    return this.dataSource.transaction(async (manager) => {
+      const existing = await this.customerRepository.findOne({
+        where: { externalId: dto.externalId, participantId },
+      });
+
+      // Prevent duplicate externalId for same participant
+      if (existing) {
+        throw new ConflictException('Already exists');
+      }
+
+      // Validate business rules
+      this.validateCreateRules(dto);
+
+      const customer = this.customerRepository.create({
+        ...dto,
+        participantId,
+        status: CustomerStatus.INACTIVE,
+        documentValidityDate: new Date(dto.documentValidityDate),
+        dob: dto.dob ? new Date(dto.dob) : undefined,
+      });
+
+      const savedCustomer = await this.customerRepository.save(customer);
+
+      // Create wallet for customer
+      await this.walletService.createWallet(
+        savedCustomer.uuid,
+        participantId,
+        manager,
+      );
+
+      return savedCustomer;
     });
-
-    // Prevent duplicate externalId for same participant
-    if (existing) {
-      throw new ConflictException('Already exists');
-    }
-
-    // Validate business rules
-    this.validateCreateRules(dto);
-
-    const customer = this.customerRepository.create({
-      ...dto,
-      participantId,
-      status: CustomerStatus.INACTIVE,
-      documentValidityDate: new Date(dto.documentValidityDate),
-      dob: dto.dob ? new Date(dto.dob) : undefined,
-    });
-
-    const savedCustomer = await this.customerRepository.save(customer);
-
-    // Create wallet for customer
-    await this.walletService.createWallet(savedCustomer.uuid, participantId);
-
-    return savedCustomer;
   }
 
   // ================== update ==================
@@ -593,6 +605,7 @@ export class CustomerService {
       const wallet = await this.walletService.createWallet(
         savedCustomer.uuid,
         participantId,
+        manager,
       );
 
       return {
@@ -1102,134 +1115,134 @@ export class CasService {
 /////////////////////////
 // FILE: src/ledger/ledger.controller.ts
 /////////////////////////
-import {
-  Controller,
-  Post,
-  Get,
-  Body,
-  Param,
-  UseGuards,
-  HttpCode,
-  HttpStatus,
-  NotFoundException,
-  ForbiddenException,
-} from '@nestjs/common';
-import type { Response, Request } from 'express';
-import { LedgerService } from './ledger.service';
-import { PostLedgerDto } from './dto/ledger-post.dto';
-import { ReverseLedgerDto } from './dto/ledger-reverse.dto';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { ParticipantGuard } from '../common/guards/participant/participant.guard';
-import { Participant } from '../common/decorators/participant/participant.decorator';
-import { Req, Res } from '@nestjs/common';
+// import {
+//   Controller,
+//   Post,
+//   Get,
+//   Body,
+//   Param,
+//   UseGuards,
+//   HttpCode,
+//   HttpStatus,
+//   NotFoundException,
+//   ForbiddenException,
+// } from '@nestjs/common';
+// import type { Response, Request } from 'express';
+// import { LedgerService } from './ledger.service';
+// import { PostLedgerDto } from './dto/ledger-post.dto';
+// import { ReverseLedgerDto } from './dto/ledger-reverse.dto';
+// import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+// import { ParticipantGuard } from '../common/guards/participant/participant.guard';
+// import { Participant } from '../common/decorators/participant/participant.decorator';
+// import { Req, Res } from '@nestjs/common';
 
-@Controller('api/ledger')
-@UseGuards(JwtAuthGuard, ParticipantGuard)
-export class LedgerController {
-  constructor(private readonly ledgerService: LedgerService) {}
+// @Controller('api/ledger')
+// @UseGuards(JwtAuthGuard, ParticipantGuard)
+// export class LedgerController {
+//   constructor(private readonly ledgerService: LedgerService) {}
 
-  @Post('transfer')
-  @HttpCode(HttpStatus.CREATED)
-  async createTransfer(
-    @Body() dto: PostLedgerDto,
-    @Participant() participantId: string,
-    @Req() req: Request & { user?: any },
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    if (dto.participantId !== participantId) {
-      return res.status(HttpStatus.FORBIDDEN).json({
-        statusCode: HttpStatus.FORBIDDEN,
-        message: 'participantId in body must match authenticated participant',
-      });
-    }
+//   @Post('transfer')
+//   @HttpCode(HttpStatus.CREATED)
+//   async createTransfer(
+//     @Body() dto: PostLedgerDto,
+//     @Participant() participantId: string,
+//     @Req() req: Request & { user?: any },
+//     @Res({ passthrough: true }) res: Response,
+//   ) {
+//     if (dto.participantId !== participantId) {
+//       return res.status(HttpStatus.FORBIDDEN).json({
+//         statusCode: HttpStatus.FORBIDDEN,
+//         message: 'participantId in body must match authenticated participant',
+//       });
+//     }
 
-    const result = await this.ledgerService.postTransfer({
-      ...dto,
-      postedBy: req.user?.participantId || 'system',
-    });
+//     const result = await this.ledgerService.postTransfer({
+//       ...dto,
+//       postedBy: req.user?.participantId || 'system',
+//     });
 
-    return res
-      .status(
-        result.status === 'already_processed'
-          ? HttpStatus.OK
-          : HttpStatus.CREATED,
-      )
-      .json({
-        status: result.status,
-        journalId: result.journalId,
-        txId: result.txId,
-        message:
-          result.status === 'already_processed'
-            ? 'Already processed'
-            : 'Transfer posted successfully',
-      });
-  }
+//     return res
+//       .status(
+//         result.status === 'already_processed'
+//           ? HttpStatus.OK
+//           : HttpStatus.CREATED,
+//       )
+//       .json({
+//         status: result.status,
+//         journalId: result.journalId,
+//         txId: result.txId,
+//         message:
+//           result.status === 'already_processed'
+//             ? 'Already processed'
+//             : 'Transfer posted successfully',
+//       });
+//   }
 
-  @Get('journal/:txId')
-  async getJournalByTxId(
-    @Param('txId') txId: string,
-    @Participant() participantId: string,
-  ) {
-    const journal = await this.ledgerService.findJournalByTxId(txId);
+//   @Get('journal/:txId')
+//   async getJournalByTxId(
+//     @Param('txId') txId: string,
+//     @Participant() participantId: string,
+//   ) {
+//     const journal = await this.ledgerService.findJournalByTxId(txId);
 
-    if (!journal) {
-      throw new NotFoundException(`Journal not found for txId: ${txId}`);
-    }
+//     if (!journal) {
+//       throw new NotFoundException(`Journal not found for txId: ${txId}`);
+//     }
 
-    if (journal.participantId !== participantId && participantId !== 'SYSTEM') {
-      throw new ForbiddenException(
-        'You do not have permission to view this journal',
-      );
-    }
+//     if (journal.participantId !== participantId && participantId !== 'SYSTEM') {
+//       throw new ForbiddenException(
+//         'You do not have permission to view this journal',
+//       );
+//     }
 
-    return {
-      journalId: journal.journalId,
-      txId: journal.txId,
-      reference: journal.reference,
-      participantId: journal.participantId,
-      postedBy: journal.postedBy,
-      postedAt: journal.postedAt,
-      postings: journal.postings.map((p) => ({
-        accountId: p.accountId,
-        amount: p.amount,
-        side: p.side,
-        memo: p.memo,
-      })),
-    };
-  }
+//     return {
+//       journalId: journal.journalId,
+//       txId: journal.txId,
+//       reference: journal.reference,
+//       participantId: journal.participantId,
+//       postedBy: journal.postedBy,
+//       postedAt: journal.postedAt,
+//       postings: journal.postings.map((p) => ({
+//         accountId: p.accountId,
+//         amount: p.amount,
+//         side: p.side,
+//         memo: p.memo,
+//       })),
+//     };
+//   }
 
-  @Post('reverse')
-  @HttpCode(HttpStatus.CREATED)
-  async reverseTransaction(
-    @Body() dto: ReverseLedgerDto,
-    @Participant() participantId: string,
-    @Req() req: Request & { user?: any },
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    const result = await this.ledgerService.reverseTransfer({
-      originalTxId: dto.originalTxId,
-      reason: dto.reason,
-      participantId,
-      postedBy: req.user?.participantId || 'system',
-    });
+//   @Post('reverse')
+//   @HttpCode(HttpStatus.CREATED)
+//   async reverseTransaction(
+//     @Body() dto: ReverseLedgerDto,
+//     @Participant() participantId: string,
+//     @Req() req: Request & { user?: any },
+//     @Res({ passthrough: true }) res: Response,
+//   ) {
+//     const result = await this.ledgerService.reverseTransfer({
+//       originalTxId: dto.originalTxId,
+//       reason: dto.reason,
+//       participantId,
+//       postedBy: req.user?.participantId || 'system',
+//     });
 
-    return res
-      .status(
-        result.status === 'already_processed'
-          ? HttpStatus.OK
-          : HttpStatus.CREATED,
-      )
-      .json({
-        status: result.status,
-        journalId: result.journalId,
-        txId: result.txId,
-        message:
-          result.status === 'already_processed'
-            ? 'Reversal already processed'
-            : 'Reversal posted successfully',
-      });
-  }
-}
+//     return res
+//       .status(
+//         result.status === 'already_processed'
+//           ? HttpStatus.OK
+//           : HttpStatus.CREATED,
+//       )
+//       .json({
+//         status: result.status,
+//         journalId: result.journalId,
+//         txId: result.txId,
+//         message:
+//           result.status === 'already_processed'
+//             ? 'Reversal already processed'
+//             : 'Reversal posted successfully',
+//       });
+//   }
+// }
 
 /////////////////////////
 // FILE: src/ledger/ledger.module.ts
@@ -1240,7 +1253,7 @@ import { LedgerJournal } from './entities/ledger-journal.entity';
 import { LedgerPosting } from './entities/ledger-posting.entity';
 import { LedgerService } from './ledger.service';
 import { AccountsModule } from 'src/accounts/accounts.module';
-import { LedgerController } from './ledger.controller';
+// import { LedgerController } from './ledger.controller';
 
 @Module({
   imports: [
@@ -1248,7 +1261,7 @@ import { LedgerController } from './ledger.controller';
     forwardRef(() => AccountsModule),
   ],
   providers: [LedgerService],
-  controllers: [LedgerController],
+  // controllers: [LedgerController],
   exports: [LedgerService],
 })
 export class LedgerModule {}
@@ -1892,6 +1905,194 @@ run().catch((err) => {
 });
 
 /////////////////////////
+// FILE: src/withdraw/withdraw.controller.ts
+/////////////////////////
+import { Controller, Post, Body, UseGuards } from '@nestjs/common';
+
+import { WithdrawService } from './withdraw.service';
+import { WithdrawDto } from './dto/withdraw.dto';
+import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { Participant } from 'src/common/decorators/participant/participant.decorator';
+
+@UseGuards(JwtAuthGuard)
+@Controller('/api/fp/withdraw')
+export class WithdrawController {
+  constructor(private withdrawService: WithdrawService) {}
+
+  @Post()
+  withdraw(@Body() dto: WithdrawDto, @Participant() participantId: string) {
+    return this.withdrawService.withdraw(dto, participantId);
+  }
+}
+
+/////////////////////////
+// FILE: src/withdraw/withdraw.module.ts
+/////////////////////////
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+
+import { Withdrawal } from './entities/withdraw.entity';
+import { WithdrawService } from './withdraw.service';
+import { WithdrawController } from './withdraw.controller';
+
+import { WalletModule } from 'src/wallet/wallet.module';
+import { LedgerModule } from 'src/ledger/ledger.module';
+import { KycModule } from 'src/kyc/kyc.module';
+
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([Withdrawal]),
+    WalletModule,
+    LedgerModule,
+    KycModule,
+  ],
+
+  providers: [WithdrawService],
+
+  controllers: [WithdrawController],
+})
+export class WithdrawModule {}
+
+/////////////////////////
+// FILE: src/withdraw/withdraw.service.ts
+/////////////////////////
+import { Injectable, NotFoundException } from '@nestjs/common';
+
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, DataSource } from 'typeorm';
+
+import { Withdrawal } from './entities/withdraw.entity';
+import { WithdrawDto } from './dto/withdraw.dto';
+
+import { WalletService } from 'src/wallet/wallet.service';
+import { LedgerService } from 'src/ledger/ledger.service';
+import { KycService } from 'src/kyc/kyc.service';
+
+import { KycTier } from 'src/common/enums/kyc.enums';
+import { WITHDRAWAL_POOL_FIN_ADDRESS } from 'src/common/constants';
+import { CardTransaction } from 'src/common/enums/transaction.enums';
+
+@Injectable()
+export class WithdrawService {
+  constructor(
+    @InjectRepository(Withdrawal)
+    private withdrawRepo: Repository<Withdrawal>,
+
+    private walletService: WalletService,
+    private ledgerService: LedgerService,
+    private kycService: KycService,
+    private dataSource: DataSource,
+  ) {}
+
+  async withdraw(dto: WithdrawDto, participantId: string) {
+    const wallet = await this.walletService.getWallet(
+      dto.walletId,
+      participantId,
+    );
+
+    if (!wallet) throw new NotFoundException('Wallet not found');
+
+    await this.walletService.verifyPinWithLock(wallet, participantId, dto.pin);
+
+    await this.kycService.requireTier(wallet.ccuuid, KycTier.HARD_APPROVED);
+
+    return this.dataSource.transaction(async (manager) => {
+      const txId = `WD-${Date.now()}`;
+
+      await this.ledgerService.postTransfer({
+        txId,
+        reference: 'Wallet withdrawal',
+        participantId,
+        postedBy: 'withdraw-service',
+
+        legs: [
+          {
+            finAddress: wallet.finAddress,
+            amount: dto.amount,
+            isCredit: true,
+            memo: 'Withdrawal debit',
+          },
+
+          {
+            finAddress: WITHDRAWAL_POOL_FIN_ADDRESS,
+            amount: dto.amount,
+            isCredit: false,
+            memo: 'Withdrawal settlement',
+          },
+        ],
+      });
+
+      const withdrawal = this.withdrawRepo.create({
+        participantId,
+        walletId: wallet.walletId,
+        ccuuid: wallet.ccuuid,
+        amount: dto.amount,
+        destination: dto.destination,
+        status: CardTransaction.INITIATED,
+      });
+
+      return manager.save(withdrawal);
+    });
+  }
+}
+
+/////////////////////////
+// FILE: src/withdraw/dto/withdraw.dto.ts
+/////////////////////////
+import { IsString } from 'class-validator';
+
+export class WithdrawDto {
+  @IsString()
+  walletId: string;
+
+  @IsString()
+  amount: string;
+
+  @IsString()
+  pin: string;
+
+  @IsString()
+  destination: string;
+}
+
+/////////////////////////
+// FILE: src/withdraw/entities/withdraw.entity.ts
+/////////////////////////
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+} from 'typeorm';
+
+@Entity('withdrawals')
+export class Withdrawal {
+  @PrimaryGeneratedColumn('uuid')
+  withdrawalId: string;
+
+  @Column()
+  participantId: string;
+
+  @Column()
+  walletId: string;
+
+  @Column()
+  ccuuid: string;
+
+  @Column({ type: 'decimal', precision: 18, scale: 2 })
+  amount: string;
+
+  @Column()
+  destination: string;
+
+  @Column()
+  status: string;
+
+  @CreateDateColumn()
+  createdAt: Date;
+}
+
+/////////////////////////
 // FILE: src/compliance/compliance.controller.ts
 /////////////////////////
 import { Controller } from '@nestjs/common';
@@ -2486,10 +2687,14 @@ export class AuthService {
   // Validates JWT payload during authentication
   async validate(payload: any) {
     if (!payload || !payload.sub || !payload.participantId) {
-      throw new UnauthorizedException();
+      throw new UnauthorizedException('Invalid token payload');
     }
 
-    return payload;
+    return {
+      participantId: payload.participantId,
+      username: payload.username,
+      roles: payload.roles || [],
+    };
   }
 }
 
@@ -2531,24 +2736,26 @@ import { Strategy, ExtractJwt } from 'passport-jwt';
 import { AuthService } from './auth.service';
 import { Request } from 'express';
 
+export interface JwtUser {
+  participantId: string;
+  username: string;
+  roles: string[];
+  // add more fields if needed (email, etc.)
+}
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(private readonly authService: AuthService) {
     super({
-      // Extract JWT from cookie named 'nssl-token'
       jwtFromRequest: ExtractJwt.fromExtractors([
         (req: Request) => {
-          const token = (req as any)?.cookies?.['nssl-token'] as
-            | string
-            | undefined;
+          const token = req?.cookies?.['nssl-token'] as string | undefined;
           return token || null;
         },
       ]),
 
-      // Enforce token expiration validation
-      ignoreExpiration: false,
+      ignoreExpiration: false, //  token expiration
 
-      // Load JWT secret from environment variable
       secretOrKey: (() => {
         const s = process.env.JWT_SECRET;
         if (!s) throw new Error('JWT_SECRET environment variable is not set');
@@ -2560,7 +2767,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   // ================== validate ==================
   // Validates decoded JWT payload using AuthService
   async validate(payload: Record<string, any>): Promise<any> {
-    return await this.authService.validate(payload);
+    const validated = await this.authService.validate(payload);
+
+    return {
+      participantId: validated.participantId,
+      username: validated.username,
+      roles: validated.roles || [],
+    };
   }
 }
 
@@ -3005,7 +3218,7 @@ export class WalletController {
 
   // ================== getHistory ==================
   // Returns transaction history of the wallet
-  @Post(':walletId/history')
+  @Get(':walletId/history')
   getHistory(
     @Param('walletId') walletId: string,
     @Participant() participantId: string,
@@ -3037,12 +3250,14 @@ import { AccountsModule } from 'src/accounts/accounts.module';
 import { CustomerModule } from 'src/customer/customer.module';
 import { WalletLimit } from './entities/wallet-limit.entity';
 import { LedgerModule } from 'src/ledger/ledger.module';
+import { KycModule } from 'src/kyc/kyc.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Wallet, Transaction, WalletLimit]),
     AccountsModule,
     LedgerModule,
+    KycModule,
     forwardRef(() => CustomerModule),
   ],
   providers: [WalletService],
@@ -3081,6 +3296,8 @@ import { CustomerService } from 'src/customer/customer.service';
 import { LedgerService } from 'src/ledger/ledger.service';
 import { SYSTEM_POOL_FIN_ADDRESS } from 'src/common/constants';
 import { WalletLimit } from './entities/wallet-limit.entity';
+import { KycService } from 'src/kyc/kyc.service';
+import { KycTier } from 'src/common/enums/kyc.enums';
 
 @Injectable()
 export class WalletService {
@@ -3096,26 +3313,32 @@ export class WalletService {
     @InjectRepository(Transaction)
     private txRepo: Repository<Transaction>,
 
-    private accService: AccountsService,
-
     @Inject(forwardRef(() => CustomerService))
     private customerService: CustomerService,
 
+    private accService: AccountsService,
     private ledgerService: LedgerService,
+    private kycService: KycService,
 
     private dataSource: DataSource,
   ) {
     Decimal.set({ precision: 18, rounding: Decimal.ROUND_HALF_UP });
   }
 
-  async createWallet(ccuuid: string, participantId: string) {
+  async createWallet(
+    ccuuid: string,
+    participantId: string,
+    manager?: EntityManager,
+  ): Promise<Wallet> {
+    const walletRepo = manager ? manager.getRepository(Wallet) : this.wallRepo;
+
     const finAddress = `WALLET-${ccuuid}`;
 
-    if (await this.wallRepo.findOne({ where: { finAddress } })) {
+    if (await walletRepo.findOne({ where: { finAddress } })) {
       throw new BadRequestException('Wallet already exists');
     }
 
-    const wallet = this.wallRepo.create({
+    const wallet = walletRepo.create({
       ccuuid,
       participantId,
       finAddress,
@@ -3124,22 +3347,24 @@ export class WalletService {
       pinAttempts: 0,
     });
 
-    const saved = await this.wallRepo.save(wallet);
+    const saved = await walletRepo.save(wallet);
 
-    await this.accService.create(participantId, {
-      finAddress,
-      currency: Currency.SLE,
-    });
+    await this.accService.create(
+      participantId,
+      {
+        finAddress,
+        currency: Currency.SLE,
+      },
+      manager,
+    );
+
+    //  add limit id matches wallet and wallet limit repo
 
     return saved;
   }
 
   async getBalance(walletId: string, participantId: string) {
-    const wallet = await this.wallRepo.findOne({
-      where: { walletId, participantId },
-    });
-
-    if (!wallet) throw new NotFoundException('Wallet not found');
+    const wallet = await this.validateActiveWallet(walletId, participantId);
 
     const balance = await this.ledgerService.getDerivedBalance(
       wallet.finAddress,
@@ -3154,11 +3379,7 @@ export class WalletService {
   }
 
   async getHistory(walletId: string, participantId: string) {
-    const wallet = await this.wallRepo.findOne({
-      where: { walletId, participantId },
-    });
-
-    if (!wallet) throw new NotFoundException('Wallet not found');
+    const wallet = await this.validateActiveWallet(walletId, participantId);
 
     return this.txRepo.find({
       where: [
@@ -3174,10 +3395,9 @@ export class WalletService {
     dto: FundWalletDto & { idempotencyKey?: string },
     participantId: string,
   ) {
-    const wallet = await this.wallRepo.findOne({
-      where: { walletId: dto.walletId, participantId },
-    });
-    if (!wallet) throw new NotFoundException('Wallet not found');
+    const wallet = await this.validateActiveWallet(dto.walletId, participantId);
+
+    await this.kycService.requireTier(wallet.ccuuid, KycTier.SOFT_APPROVED);
 
     await this.verifyPinWithLock(wallet, participantId, dto.pin);
 
@@ -3249,10 +3469,9 @@ export class WalletService {
     dto: WithdrawWalletDto & { idempotencyKey?: string },
     participantId: string,
   ) {
-    const wallet = await this.wallRepo.findOne({
-      where: { walletId: dto.walletId, participantId },
-    });
-    if (!wallet) throw new NotFoundException('Wallet not found');
+    const wallet = await this.validateActiveWallet(dto.walletId, participantId);
+
+    await this.kycService.requireTier(wallet.ccuuid, KycTier.HARD_APPROVED);
 
     await this.verifyPinWithLock(wallet, participantId, dto.pin);
 
@@ -3333,23 +3552,26 @@ export class WalletService {
   }
 
   async transferWallet(dto: TransferWalletDto, participantId: string) {
-    const sender = await this.wallRepo.findOne({
-      where: { walletId: dto.senderWalletId, participantId },
-    });
-    if (!sender) throw new NotFoundException('Sender wallet not found');
+    const sender = await this.validateActiveWallet(
+      dto.senderWalletId,
+      participantId,
+    );
 
     await this.verifyPinWithLock(sender, participantId, dto.pin);
 
-    const receiver = await this.wallRepo.findOne({
-      where: { finAddress: dto.receiverFinAddress },
-    });
-    if (!receiver) throw new NotFoundException('Receiver not found');
+    const receiver = await this.getWalletByFinAddress(dto.receiverFinAddress);
 
     if (sender.walletId === receiver.walletId) {
       throw new BadRequestException('Cannot send to yourself');
     }
 
     const amount = new Decimal(dto.amount);
+
+    if (amount.gt(5000)) {
+      await this.kycService.requireTier(sender.ccuuid, KycTier.HARD_APPROVED);
+    } else {
+      await this.kycService.requireTier(sender.ccuuid, KycTier.SOFT_APPROVED);
+    }
 
     if (amount.isNaN() || amount.lessThanOrEqualTo(0)) {
       throw new BadRequestException('Invalid amount');
@@ -3449,28 +3671,62 @@ export class WalletService {
     });
   }
 
-  private async verifyPinWithLock(
+  async getWallet(
+    walletId: string,
+    participantId: string,
+  ): Promise<Wallet | null> {
+    return this.wallRepo.findOne({
+      where: { walletId, participantId },
+    });
+  }
+
+  public async verifyPinWithLock(
     wallet: Wallet,
     participantId: string,
     pin: string,
   ): Promise<void> {
-    try {
-      await this.customerService.verifyPin(wallet.ccuuid, participantId, pin);
-      wallet.pinAttempts = 0;
-    } catch {
-      wallet.pinAttempts = (wallet.pinAttempts ?? 0) + 1;
-      if (wallet.pinAttempts >= 3) {
-        wallet.status = WalletStatus.LOCKED;
-      }
-      throw new BadRequestException(
-        `Invalid PIN. Attempt ${wallet.pinAttempts}/3` +
-          (wallet.status === WalletStatus.LOCKED ? '. Wallet locked.' : ''),
-      );
-    } finally {
-      await this.wallRepo.save(wallet);
-    }
-  }
+    await this.dataSource.transaction(async (manager: EntityManager) => {
+      // 1. Lock the wallet row (pessimistic write) — only one request can proceed
+      const lockedWallet = await manager
+        .createQueryBuilder(Wallet, 'wallet')
+        .where('wallet.walletId = :id AND wallet.participantId = :pid', {
+          id: wallet.walletId,
+          pid: participantId,
+        })
+        .setLock('pessimistic_write') // ← THIS IS THE FIX
+        .getOne();
 
+      if (!lockedWallet) throw new NotFoundException('Wallet not found');
+
+      if (lockedWallet.status === WalletStatus.LOCKED) {
+        throw new BadRequestException(
+          'Wallet is locked. Contact support to unlock.',
+        );
+      }
+
+      try {
+        await this.customerService.verifyPin(
+          lockedWallet.ccuuid,
+          participantId,
+          pin,
+        );
+        lockedWallet.pinAttempts = 0;
+      } catch {
+        lockedWallet.pinAttempts = (lockedWallet.pinAttempts ?? 0) + 1;
+        if (lockedWallet.pinAttempts >= 3) {
+          lockedWallet.status = WalletStatus.LOCKED;
+        }
+        throw new BadRequestException(
+          `Invalid PIN. Attempt ${lockedWallet.pinAttempts}/3` +
+            (lockedWallet.status === WalletStatus.LOCKED
+              ? '. Wallet locked.'
+              : ''),
+        );
+      }
+
+      await manager.save(lockedWallet);
+    });
+  }
   private async calculateDailySent(
     manager: EntityManager,
     finAddress: string,
@@ -3489,6 +3745,38 @@ export class WalletService {
 
     // TypeORM SUM returns a string for decimal columns in most SQL dialects
     return result?.total || '0';
+  }
+
+  private async validateActiveWallet(
+    walletId: string,
+    participantId: string,
+  ): Promise<Wallet> {
+    const wallet = await this.wallRepo.findOne({
+      where: { walletId, participantId },
+    });
+
+    if (!wallet) throw new NotFoundException('Wallet not found');
+
+    if (wallet.status !== WalletStatus.ACTIVE) {
+      throw new BadRequestException(
+        `Wallet is ${wallet.status.toLowerCase()}. Only ACTIVE wallets can perform operations.`,
+      );
+    }
+
+    return wallet;
+  }
+
+  async getWalletByFinAddress(finAddress: string): Promise<Wallet> {
+    const wallet = await this.wallRepo.findOne({
+      where: { finAddress },
+    });
+
+    if (!wallet) throw new NotFoundException('Receiver wallet not found');
+
+    if (wallet.status !== WalletStatus.ACTIVE)
+      throw new BadRequestException('Receiver wallet not active');
+
+    return wallet;
   }
 }
 
@@ -3929,6 +4217,7 @@ export class AccountsController {
     return { message: 'Account closed successfully' };
   }
 }
+
 /////////////////////////
 // FILE: src/accounts/accounts.module.ts
 /////////////////////////
@@ -3967,7 +4256,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, EntityManager } from 'typeorm';
 import { Account, AccountStatus } from './entities/account.entity';
 import { CreateAccountDto } from './dto/create-account.dto';
 import { Currency } from 'src/common/enums/transaction.enums';
@@ -3992,17 +4281,24 @@ export class AccountsService {
   /**
    * Create ledger account for authenticated participant
    */
-  async create(participantId: string, dto: CreateAccountDto): Promise<Account> {
+  async create(
+    participantId: string,
+    dto: CreateAccountDto,
+    manager?: EntityManager,
+  ): Promise<Account> {
     // // AML Screening (BSL mandatory)
     // const kycTier = await this.kycService.getTierByParticipant(participantId);
     // if (kycTier === KycTier.NONE || kycTier === KycTier.HARD_REJECTED) {
     //   throw new ForbiddenException('KYC approval required (BSL compliance)');
     // }
 
+    const accRepo = manager ? manager.getRepository(Account) : this.accountRepo;
+
     // 1. Check uniqueness
-    const existing = await this.accountRepo.findOne({
+    const existing = await accRepo.findOne({
       where: { finAddress: dto.finAddress },
     });
+
     if (existing) {
       if (existing.participantId === participantId) {
         throw new BadRequestException('You already own this FIN address');
@@ -4011,7 +4307,7 @@ export class AccountsService {
     }
 
     // 2. Create
-    const account = this.accountRepo.create({
+    const account = accRepo.create({
       finAddress: dto.finAddress,
       participantId,
       currency: dto.currency,
@@ -4019,7 +4315,7 @@ export class AccountsService {
       // kycTier, // Bank-grade: Link tier for limits
     });
 
-    const saved = await this.accountRepo.save(account);
+    const saved = await accRepo.save(account);
 
     // Audit (BSL)
     // await this.complianceService.log('account_create', participantId, participantId, { finAddress: dto.finAddress });
@@ -4188,6 +4484,281 @@ export class Account {
   // frozenReason?: string;
 }
 /////////////////////////
+// FILE: src/load/load.controller.ts
+/////////////////////////
+import { Controller } from '@nestjs/common';
+
+@Controller('load')
+export class LoadController {}
+
+/////////////////////////
+// FILE: src/load/load.module.ts
+/////////////////////////
+import { Module, forwardRef } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+
+import { LoadController } from './load.controller';
+import { LoadService } from './load.service';
+import { LoadTransaction } from './entities/load-wallet.entity';
+
+import { WalletModule } from 'src/wallet/wallet.module';
+import { LedgerModule } from 'src/ledger/ledger.module';
+import { CardModule } from 'src/card/card.module';
+import { KycModule } from 'src/kyc/kyc.module';
+
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([LoadTransaction]),
+    forwardRef(() => WalletModule),
+    LedgerModule,
+    CardModule,
+    KycModule,
+  ],
+
+  controllers: [LoadController],
+
+  providers: [LoadService],
+
+  exports: [LoadService],
+})
+export class LoadModule {}
+
+/////////////////////////
+// FILE: src/load/load.service.ts
+/////////////////////////
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, DataSource } from 'typeorm';
+import { LoadTransaction } from './entities/load-wallet.entity';
+import { WalletService } from 'src/wallet/wallet.service';
+import { LedgerService } from 'src/ledger/ledger.service';
+import { CardService } from 'src/card/card.service';
+import { KycService } from 'src/kyc/kyc.service';
+import { LoadWalletDto } from './dto/load-wallet-dto';
+import { KycTier } from 'src/common/enums/kyc.enums';
+import { CardTransaction } from 'src/common/enums/transaction.enums';
+import { WalletStatus } from 'src/common/enums/banking.enums';
+import { CARD_GATEWAY_POOL_FIN_ADDRESS, TX_PREFIX } from 'src/common/constants';
+
+@Injectable()
+export class LoadService {
+  constructor(
+    @InjectRepository(LoadTransaction)
+    private loadRepo: Repository<LoadTransaction>,
+    private walletService: WalletService,
+    private ledgerService: LedgerService,
+    private cardService: CardService,
+    private kycService: KycService,
+    private dataSource: DataSource,
+  ) {}
+
+  async loadWallet(dto: LoadWalletDto, participantId: string) {
+    const { idempotencyKey } = dto;
+
+    // 1. Idempotency Check
+    const existing = await this.loadRepo.findOne({ where: { idempotencyKey } });
+    if (existing && existing.status === CardTransaction.COMPLETED)
+      return existing;
+
+    // 2. Pre-Validation (Fetch Wallet & Verify PIN)
+    // We use your existing verifyPinWithLock logic via WalletService
+    const wallet = await this.walletService.getWallet(
+      dto.walletId,
+      participantId,
+    );
+    if (!wallet) throw new NotFoundException('Wallet not found');
+
+    if (wallet.status === WalletStatus.INACTIVE)
+      throw new BadRequestException('Wallet is Inactive');
+
+    if (wallet.status === WalletStatus.LOCKED)
+      throw new BadRequestException('Wallet is Locked');
+
+    // Use the robust PIN verification you built in WalletService
+    await this.walletService.verifyPinWithLock(wallet, participantId, dto.pin);
+
+    await this.kycService.requireTier(wallet.ccuuid, KycTier.SOFT_APPROVED);
+
+    // 3. Get Card (Securely fetch token)
+    const card = await this.cardService.getCardSecure(
+      participantId,
+      dto.cardId,
+    );
+    if (!card || !card.isActive)
+      throw new BadRequestException('Invalid or inactive card');
+
+    if (card.ccuuid !== wallet.ccuuid)
+      throw new BadRequestException('Card does not belong to wallet owner');
+
+    // 4. Create Audit Record
+    const loadTx = await this.loadRepo.save(
+      this.loadRepo.create({
+        idempotencyKey,
+        participantId,
+        ccuuid: wallet.ccuuid,
+        walletId: wallet.walletId,
+        amount: dto.amount,
+        status: CardTransaction.INITIATED,
+      }),
+    );
+
+    try {
+      // 5. Charge External Gateway
+      const gatewayResult = await this.chargeGateway(
+        card.token,
+        dto.amount,
+        idempotencyKey,
+      );
+
+      if (!gatewayResult.success) {
+        loadTx.status = CardTransaction.FAILED;
+        await this.loadRepo.save(loadTx);
+        throw new BadRequestException('Card charge failed');
+      }
+
+      // 6. Update Internal Ledger (Atomic Transaction)
+      return await this.dataSource.transaction(async (manager) => {
+        const txId = `${TX_PREFIX.LOAD}-${loadTx.id}`;
+        const transferResult = await this.ledgerService.postTransfer(
+          {
+            txId,
+            idempotencyKey: `LEDGER-${idempotencyKey}`,
+            reference: `Card load: ${card.brand} - ${card.last4}`,
+            participantId,
+            postedBy: 'load-service',
+            legs: [
+              {
+                finAddress: CARD_GATEWAY_POOL_FIN_ADDRESS, // System Liability Account
+                amount: dto.amount,
+                isCredit: true,
+                memo: 'Gateway collection',
+              },
+              {
+                finAddress: wallet.finAddress, // User Wallet Account
+                amount: dto.amount,
+                isCredit: false,
+                memo: 'Wallet load success',
+              },
+            ],
+          },
+          manager,
+        );
+
+        if (!transferResult?.journalId) {
+          loadTx.status = CardTransaction.FAILED;
+          throw new Error('Ledger transfer failed');
+        } else {
+          // 7. Finalize Status
+          loadTx.status = CardTransaction.COMPLETED;
+          loadTx.gatewayRef = gatewayResult.reference;
+        }
+        return await manager.save(loadTx);
+      });
+    } catch (error) {
+      console.error('CRITICAL: Load failed after gateway charge', error);
+      // We don't mark as FAILED here because the gateway might have taken the money.
+      // A reconciliation cron job should pick this up.
+      throw error;
+    }
+  }
+
+  private async chargeGateway(token: string, amount: string, key: string) {
+    // Simulate API call to Stripe/Paystack/Flutterwave
+    await new Promise((r) => setTimeout(r, 100));
+    return { success: true, reference: `GTW-${Date.now}` };
+  }
+}
+
+/////////////////////////
+// FILE: src/load/dto/load-wallet-dto.ts
+/////////////////////////
+import {
+  IsString,
+  IsNotEmpty,
+  IsNumberString,
+  IsUUID,
+  Length,
+} from 'class-validator';
+
+export class LoadWalletDto {
+  @IsUUID()
+  @IsNotEmpty()
+  walletId: string;
+
+  @IsUUID()
+  @IsNotEmpty()
+  cardId: string;
+
+  @IsNumberString()
+  @IsNotEmpty()
+  amount: string;
+
+  @IsString()
+  @Length(4, 4) // Assuming a 4-digit transaction PIN
+  @IsNotEmpty()
+  pin: string;
+
+  /**
+   * Unique key generated by the client (UUID v4).
+   * Prevents double charging if the network retries the request.
+   */
+  @IsString()
+  @IsNotEmpty()
+  idempotencyKey: string;
+}
+
+/////////////////////////
+// FILE: src/load/entities/load-wallet.entity.ts
+/////////////////////////
+import { CardTransaction } from 'src/common/enums/transaction.enums';
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  PrimaryGeneratedColumn,
+  Index,
+} from 'typeorm';
+
+@Entity('load_transactions')
+export class LoadTransaction {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column()
+  participantId: string;
+
+  @Column()
+  @Index({ unique: true })
+  idempotencyKey: string; // Crucial: prevents double charging
+
+  @Column()
+  ccuuid: string;
+
+  @Column()
+  walletId: string;
+
+  @Column({ type: 'decimal', precision: 18, scale: 2 })
+  amount: string;
+
+  @Column({
+    type: 'enum',
+    enum: CardTransaction,
+    default: CardTransaction.INITIATED,
+  })
+  status: CardTransaction;
+
+  @Column({ nullable: true })
+  gatewayRef: string;
+
+  @CreateDateColumn()
+  createdAt: Date;
+}
+
+/////////////////////////
 // FILE: src/kyc/kyc.controller.ts
 /////////////////////////
 import {
@@ -4208,6 +4779,9 @@ import { RejectKycDto } from './dto/review-kyc.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { memoryStorage } from 'multer';
 import { Participant } from 'src/common/decorators/participant/participant.decorator';
+import { RolesGuard } from 'src/common/guards/auth/roles.gaurd';
+import { Roles } from 'src/common/decorators/auth/roles.decorator';
+import { Role } from 'src/common/enums/auth.enums';
 
 const upload = FileFieldsInterceptor(
   [
@@ -4232,7 +4806,7 @@ const upload = FileFieldsInterceptor(
   },
 );
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('/api/fp/kyc')
 export class KycController {
   constructor(private readonly kycService: KycService) {}
@@ -4240,21 +4814,25 @@ export class KycController {
   // ── 1. ADMIN ROUTES (Static paths first!) ──────────────────────
 
   @Get('admin/pending') // Must be above :ccuuid routes
+  @Roles(Role.ADMIN)
   getPending() {
     return this.kycService.getPendingReviews();
   }
 
   @Get('admin/:kycId') // Specific admin record
+  @Roles(Role.ADMIN)
   getRecord(@Param('kycId') kycId: string) {
     return this.kycService.getRecord(kycId);
   }
 
   @Post('admin/:kycId/approve')
+  @Roles(Role.ADMIN)
   approve(@Param('kycId') kycId: string, @Participant() participantId: string) {
     return this.kycService.approveHard(kycId, participantId);
   }
 
   @Post('admin/:kycId/reject')
+  @Roles(Role.ADMIN)
   reject(
     @Param('kycId') kycId: string,
     @Body() dto: RejectKycDto,
@@ -4267,12 +4845,17 @@ export class KycController {
 
   // Get own KYC status
   @Get(':ccuuid/status')
-  getStatus(@Param('ccuuid') ccuuid: string) {
-    return this.kycService.getStatus(ccuuid);
+  @Roles(Role.CUSTOMER)
+  getStatus(
+    @Param('ccuuid') ccuuid: string,
+    @Participant() participantId: string,
+  ) {
+    return this.kycService.getStatus(ccuuid, participantId);
   }
 
   // Submit Soft KYC — auto approved
   @Post(':ccuuid/soft')
+  @Roles(Role.CUSTOMER)
   submitSoft(
     @Param('ccuuid') ccuuid: string,
     @Body() dto: SoftKycDto,
@@ -4283,6 +4866,7 @@ export class KycController {
 
   // Submit Hard KYC — goes to admin review queue
   @Post(':ccuuid/hard')
+  @Roles(Role.CUSTOMER)
   @UseInterceptors(upload)
   submitHard(
     @Param('ccuuid') ccuuid: string,
@@ -4435,8 +5019,10 @@ export class KycService {
   }
 
   // ── CUSTOMER: Get own KYC status ──────────────────────────────
-  async getStatus(ccuuid: string) {
-    const record = await this.kycRepo.findOne({ where: { ccuuid } });
+  async getStatus(ccuuid: string, participantId: string) {
+    const record = await this.kycRepo.findOne({
+      where: { ccuuid, participantId },
+    });
     if (!record) return { tier: KycTier.NONE, message: 'No KYC submitted yet' };
 
     return {
@@ -4518,6 +5104,16 @@ export class KycService {
       KycTier.HARD_APPROVED,
     ];
 
+    /*
+    | Tier          | Allowed                |
+| ------------- | ---------------------- |
+| NONE          | register               |
+| SOFT_APPROVED | small wallet transfers |
+| HARD_APPROVED | large transfers        |
+| HARD_APPROVED | loans                  |
+| HARD_APPROVED | withdrawals            |
+
+    */
     const currentIdx = order.indexOf(tier);
     const requiredIdx = order.indexOf(required);
 
@@ -4791,8 +5387,8 @@ import { LedgerModule } from 'src/ledger/ledger.module';
     VerifyModule,
     FundingModule,
     LedgerModule,
-    CreditTransferController,
   ],
+  controllers: [CreditTransferController],
   providers: [PaymentsService, CreditTransferService],
   exports: [PaymentsService, TypeOrmModule],
 })
@@ -6614,9 +7210,33 @@ export class Transaction {
 /////////////////////////
 // FILE: src/common/constants.ts
 /////////////////////////
+// ================= SYSTEM ACCOUNTS =================
+
 export const SYSTEM_POOL_FIN_ADDRESS = 'SYSTEM_INTERNAL';
+
+// Account that temporarily holds money from card gateway
+export const CARD_GATEWAY_POOL_FIN_ADDRESS = 'SYSTEM_CARD_GATEWAY';
+
+// Future: withdrawal settlement pool
+export const WITHDRAWAL_POOL_FIN_ADDRESS = 'SYSTEM_WITHDRAWAL_POOL';
+
+// ================= FIN ADDRESS PREFIXES =================
+
 export const WALLET_FIN_PREFIX = 'WALLET-';
+
+// ================= DEFAULT SETTINGS =================
+
 export const DEFAULT_CURRENCY = 'SLE'; // Sierra Leone Leone
+
+// ================= TRANSACTION PREFIXES =================
+
+export const TX_PREFIX = {
+  FUND: 'FUND',
+  WITHDRAW: 'WD',
+  TRANSFER: 'TRF',
+  LOAD: 'LOAD',
+};
+
 /////////////////////////
 // FILE: src/common/crypto/aes.service.ts
 /////////////////////////
@@ -6802,12 +7422,27 @@ export enum AliasStatus {
 }
 
 /////////////////////////
+// FILE: src/common/enums/auth.enums.ts
+/////////////////////////
+export enum Role {
+  USER = 'user',
+  ADMIN = 'admin',
+  CUSTOMER = 'customer',
+}
+
+/////////////////////////
 // FILE: src/common/enums/banking.enums.ts
 /////////////////////////
 export enum WalletStatus {
   ACTIVE = 'ACTIVE',
   INACTIVE = 'INACTIVE',
   LOCKED = 'LOCKED',
+}
+
+export enum WalletLimit {
+  TEN = '10000',
+  TEWNTY = '20000',
+  FIFTY = '50000',
 }
 
 /////////////////////////
@@ -6825,6 +7460,16 @@ export enum FundMethod {
   CARD = 'CARD',
   BANK = 'BANK',
   MOBILE_MONEY = 'MOBILE_MONEY',
+}
+
+/////////////////////////
+// FILE: src/common/enums/card.enums.ts
+/////////////////////////
+export enum CardBrand {
+  VISA = 'VISA',
+  MASTERCARD = 'MASTERCARD',
+  AMEX = 'AMEX',
+  DISCOVER = 'DISCOVER',
 }
 
 /////////////////////////
@@ -6937,6 +7582,13 @@ export enum CrDbType {
   DEBIT = 'DEBIT',
 }
 
+export enum CardTransaction {
+  INITIATED = 'INITIATED',
+  GATEWAY_SUCCESS = 'GATEWAY_SUCCESS',
+  FAILED = 'FAILED',
+  COMPLETED = 'COMPLETED',
+}
+
 /////////////////////////
 // FILE: src/common/guards/participant/participant.guard.ts
 /////////////////////////
@@ -6954,7 +7606,6 @@ import { Repository } from 'typeorm';
 @Injectable()
 export class ParticipantGuard implements CanActivate {
   constructor(
-    // Inject Participant repository
     @InjectRepository(Participant)
     private readonly parRepo: Repository<Participant>,
   ) {}
@@ -6962,28 +7613,85 @@ export class ParticipantGuard implements CanActivate {
   // ================== canActivate ==================
   // Validates participant-id header before allowing request
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    // Get HTTP request object
     const req = context.switchToHttp().getRequest<Request>();
-
-    // Extract participant-id from request headers
-    const headerId = req.headers['participant-id'] as string;
+    const bankId = req.headers['participant-id'] as string;
 
     // Check if participant exists and is active
-    const exists = await this.parRepo.findOne({
+    const bank = await this.parRepo.findOne({
       where: {
-        participantId: headerId,
+        participantId: bankId,
         isActive: true,
       },
     });
 
-    // Reject request if participant is invalid
-    if (!exists)
+    if (!bank)
       throw new UnauthorizedException(
         'This Participant ID is not registered or active',
       );
 
     // Attach participantId to request for downstream usage
-    (req as any).participantId = headerId;
+    // (req as any).participantId = bankId;
+
+    const rolesArray = [bank.roles];
+
+    // 1. Attach to request root (as requested)
+    const request = req as any;
+    request.participantId = bank.participantId;
+    request.bankId = bank.participantId;
+    request.name = bank.username; // Using username as name
+    request.roles = rolesArray;
+
+    // 2. Attach to req.user for NestJS standard usage
+    req.user = {
+      id: bank.participantId,
+      name: bank.username,
+      roles: rolesArray,
+    };
+
+    return true;
+  }
+}
+
+/////////////////////////
+// FILE: src/common/guards/auth/roles.gaurd.ts
+/////////////////////////
+import {
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+} from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { ROLES_KEY } from 'src/common/decorators/auth/roles.decorator';
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const requiredRoles = this.reflector.getAllAndOverride<string[]>(
+      ROLES_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+
+    // If no @Roles decorator is present, allow access
+    if (!requiredRoles || requiredRoles.length === 0) {
+      return true;
+    }
+
+    const request = context.switchToHttp().getRequest();
+    const user = request.user;
+
+    if (!user || !user.roles || !Array.isArray(user.roles)) {
+      throw new ForbiddenException('No roles found — access denied');
+    }
+
+    // Check if the user's role matches any of the required roles
+    const hasRole = requiredRoles.some((role) => user.roles.includes(role));
+
+    if (!hasRole) {
+      throw new ForbiddenException('Access denied: Insufficient permissions');
+    }
 
     return true;
   }
@@ -7063,49 +7771,79 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 
-// Catching ALL unhandled exceptions
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
-  // Logger instance for internal error logging
   private readonly logger = new Logger(GlobalExceptionFilter.name);
 
-  // ================== catch ==================
-  // Global handler for all application exceptions
   catch(exception: unknown, host: ArgumentsHost) {
-    // Switch execution context to HTTP
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
-    // Default response values for unexpected errors
+    const isProduction = process.env.NODE_ENV === 'production';
+
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
+    let details: any = undefined;
+
     let message: string | string[] = 'Internal server error';
 
-    // Handle known HTTP exceptions
     if (exception instanceof HttpException) {
       status = exception.getStatus();
-      const res = exception.getResponse();
+      const response = exception.getResponse();
 
-      // Extract message from response object if available
-      message =
-        typeof res === 'object' && 'message' in (res as any)
-          ? (res as any).message
-          : exception.message;
+      if (typeof response === 'string') {
+        message = response;
+      } else if (typeof response === 'object' && response !== null) {
+        // Most common case: validation errors return { message: string | string[], ... }
+        if ('message' in response) {
+          const msg = (response as any).message;
+          message = Array.isArray(msg) ? msg : String(msg ?? 'Error');
+        } else {
+          message = exception.message;
+        }
+      } else {
+        message = exception.message;
+      }
     } else {
-      // Log unexpected errors internally
+      // unknown / non-HTTP exception
       this.logger.error(
         `Unhandled exception on ${request.method} ${request.url}`,
         exception instanceof Error ? exception.stack : String(exception),
       );
+
+      if (!isProduction) {
+        message = 'Internal server error (dev mode)';
+        details = {
+          name: exception instanceof Error ? exception.name : 'Unknown',
+          message:
+            exception instanceof Error ? exception.message : String(exception),
+        };
+      }
     }
 
-    // Send standardized error response
-    response.status(status).json({
+    // Normalize message to always be string or string[]
+    const clientMessage =
+      Array.isArray(message) && message.length > 0
+        ? message.join('. ') // most common choice for validation errors
+        : typeof message === 'string'
+          ? message
+          : 'An unexpected error occurred';
+
+    const payload: any = {
       statusCode: status,
-      message,
+      message: clientMessage,
       timestamp: new Date().toISOString(),
       path: request.url,
-    });
+    };
+
+    if (details && !isProduction) {
+      payload.details = details;
+    }
+
+    // Optional: add correlation id or trace id in future
+    // payload.traceId = request.headers['x-request-id'] || uuid();
+
+    response.status(status).json(payload);
   }
 }
 
@@ -7125,6 +7863,15 @@ export const Participant = createParamDecorator(
     return request.participantId; // set by ParticipantGuard from participant-id header
   },
 );
+
+/////////////////////////
+// FILE: src/common/decorators/auth/roles.decorator.ts
+/////////////////////////
+import { SetMetadata } from '@nestjs/common';
+import { Role } from 'src/common/enums/auth.enums';
+
+export const ROLES_KEY = 'roles';
+export const Roles = (...roles: Role[]) => SetMetadata(ROLES_KEY, roles);
 
 /////////////////////////
 // FILE: src/common/interceptors/encryption.interceptor.ts
@@ -7181,3 +7928,223 @@ export class EncryptionInterceptor implements NestInterceptor {
 // content = ciphertext (encrypted payload)
 // tag = authentication tag used to verify data integrity
 // iv = random initialization vector ensuring unique ciphertext for same plaintext
+
+/////////////////////////
+// FILE: src/card/card.controller.ts
+/////////////////////////
+import {
+  Body,
+  Controller,
+  Param,
+  Post,
+  UseGuards,
+  Get,
+  Delete,
+} from '@nestjs/common';
+import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { CardService } from './card.service';
+import { AddCardDto } from './dto/add-card.dto';
+import { Participant } from 'src/common/decorators/participant/participant.decorator';
+
+@Controller('/api/fp/cards')
+@UseGuards(JwtAuthGuard)
+export class CardController {
+  constructor(private cardService: CardService) {}
+
+  @Post(':ccuuid')
+  addCard(
+    @Param('ccuuid') ccuuid: string,
+    @Body() dto: AddCardDto,
+    @Participant() participantId: string,
+  ) {
+    // Fixed argument order to match Service
+    return this.cardService.addCard(participantId, ccuuid, dto);
+  }
+
+  @Get(':ccuuid')
+  listCards(
+    @Param('ccuuid') ccuuid: string,
+    @Participant() participantId: string, // Added decorator
+  ) {
+    // Fixed typo 'particiccuuid'
+    return this.cardService.listCards(participantId, ccuuid);
+  }
+
+  @Delete(':cardId')
+  removeCard(
+    @Param('cardId') cardId: string,
+    @Participant() participantId: string, // Added decorator for security
+  ) {
+    return this.cardService.removeCard(participantId, cardId);
+  }
+}
+
+/////////////////////////
+// FILE: src/card/card.module.ts
+/////////////////////////
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { Card } from './entities/card.entity'; // Path to your card entity
+import { CardService } from './card.service';
+import { CardController } from './card.controller';
+
+@Module({
+  imports: [
+    // This line "provides" the CardRepository to the CardService
+    TypeOrmModule.forFeature([Card]),
+  ],
+  controllers: [CardController],
+  providers: [CardService],
+  exports: [CardService], // Export it so LoadService can use it later
+})
+export class CardModule {}
+
+/////////////////////////
+// FILE: src/card/card.service.ts
+/////////////////////////
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Card } from './entities/card.entity';
+import { Repository } from 'typeorm';
+import { AddCardDto } from './dto/add-card.dto';
+
+@Injectable()
+export class CardService {
+  constructor(@InjectRepository(Card) private cardRepo: Repository<Card>) {}
+
+  async addCard(participantId: string, ccuuid: string, dto: AddCardDto) {
+    const existing = await this.cardRepo.findOne({
+      where: { token: dto.token, ccuuid },
+    });
+    if (existing) return existing;
+
+    const card = this.cardRepo.create({ ...dto, participantId, ccuuid });
+    return this.cardRepo.save(card);
+  }
+
+  async listCards(participantId: string, ccuuid: string) {
+    return this.cardRepo.find({
+      where: { participantId, ccuuid, isActive: true },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  async removeCard(participantId: string, cardId: string) {
+    const card = await this.cardRepo.findOne({
+      where: { cardId, participantId },
+    });
+    if (!card) throw new NotFoundException('Card not found');
+
+    card.isActive = false;
+    return this.cardRepo.save(card);
+  }
+
+  async getCardSecure(
+    participantId: string,
+    cardId: string,
+  ): Promise<Card | null> {
+    return this.cardRepo
+      .createQueryBuilder('card')
+      .addSelect('card.token')
+      .where('card.cardId = :cardId AND card.participantId = :participantId', {
+        cardId,
+        participantId,
+      })
+      .getOne();
+  }
+}
+
+/////////////////////////
+// FILE: src/card/dto/add-card.dto.ts
+/////////////////////////
+// src/card/dto/add-card.dto.ts
+import {
+  IsString,
+  IsEnum,
+  Min,
+  Max,
+  Length,
+  IsNumberString,
+} from 'class-validator';
+import { CardBrand } from 'src/common/enums/card.enums';
+
+export class AddCardDto {
+  @IsString()
+  token: string;
+
+  @IsNumberString()
+  @Length(6, 6)
+  bin: string;
+
+  @IsNumberString()
+  @Length(4, 4)
+  last4: string;
+
+  @IsEnum(CardBrand)
+  brand: CardBrand;
+
+  @Min(1)
+  @Max(12)
+  expMonth: number;
+
+  @Min(new Date().getFullYear())
+  expYear: number;
+}
+
+/////////////////////////
+// FILE: src/card/dto/verify-card.dto.ts
+/////////////////////////
+
+/////////////////////////
+// FILE: src/card/entities/card.entity.ts
+/////////////////////////
+// src/card/entities/card.entity.ts
+import { CardBrand } from 'src/common/enums/card.enums';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  Index,
+} from 'typeorm';
+
+@Entity('cards')
+@Index(['ccuuid', 'participantId'])
+export class Card {
+  @PrimaryGeneratedColumn('uuid')
+  cardId: string;
+
+  @Column()
+  participantId: string;
+
+  @Column()
+  ccuuid: string;
+
+  @Column({ select: false })
+  token: string;
+
+  @Column()
+  bin: string; // First 6 digits (safe to store)
+
+  @Column()
+  last4: string;
+
+  @Column({ type: 'enum', enum: CardBrand })
+  brand: CardBrand;
+
+  @Column()
+  expMonth: number;
+
+  @Column()
+  expYear: number;
+
+  @Column({ default: true })
+  isActive: boolean;
+
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
+}

@@ -43,7 +43,7 @@ export class WalletController {
 
   // ================== getHistory ==================
   // Returns transaction history of the wallet
-  @Post(':walletId/history')
+  @Get(':walletId/history')
   getHistory(
     @Param('walletId') walletId: string,
     @Participant() participantId: string,

@@ -113,8 +113,10 @@ export class KycService {
   }
 
   // ── CUSTOMER: Get own KYC status ──────────────────────────────
-  async getStatus(ccuuid: string) {
-    const record = await this.kycRepo.findOne({ where: { ccuuid } });
+  async getStatus(ccuuid: string, participantId: string) {
+    const record = await this.kycRepo.findOne({
+      where: { ccuuid, participantId },
+    });
     if (!record) return { tier: KycTier.NONE, message: 'No KYC submitted yet' };
 
     return {
@@ -196,6 +198,16 @@ export class KycService {
       KycTier.HARD_APPROVED,
     ];
 
+    /*
+    | Tier          | Allowed                |
+| ------------- | ---------------------- |
+| NONE          | register               |
+| SOFT_APPROVED | small wallet transfers |
+| HARD_APPROVED | large transfers        |
+| HARD_APPROVED | loans                  |
+| HARD_APPROVED | withdrawals            |
+
+    */
     const currentIdx = order.indexOf(tier);
     const requiredIdx = order.indexOf(required);
 

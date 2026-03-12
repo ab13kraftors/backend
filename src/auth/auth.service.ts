@@ -51,10 +51,14 @@ export class AuthService {
   // Validates JWT payload during authentication
   async validate(payload: any) {
     if (!payload || !payload.sub || !payload.participantId) {
-      throw new UnauthorizedException();
+      throw new UnauthorizedException('Invalid token payload');
     }
 
-    return payload;
+    return {
+      participantId: payload.participantId,
+      username: payload.username,
+      roles: payload.roles || [],
+    };
   }
 }
 

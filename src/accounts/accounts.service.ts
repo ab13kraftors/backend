@@ -7,7 +7,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, EntityManager } from 'typeorm';
 import { Account, AccountStatus } from './entities/account.entity';
 import { CreateAccountDto } from './dto/create-account.dto';
 import { Currency } from 'src/common/enums/transaction.enums';
@@ -32,17 +32,24 @@ export class AccountsService {
   /**
    * Create ledger account for authenticated participant
    */
-  async create(participantId: string, dto: CreateAccountDto): Promise<Account> {
+  async create(
+    participantId: string,
+    dto: CreateAccountDto,
+    manager?: EntityManager,
+  ): Promise<Account> {
     // // AML Screening (BSL mandatory)
     // const kycTier = await this.kycService.getTierByParticipant(participantId);
     // if (kycTier === KycTier.NONE || kycTier === KycTier.HARD_REJECTED) {
     //   throw new ForbiddenException('KYC approval required (BSL compliance)');
     // }
 
+    const accRepo = manager ? manager.getRepository(Account) : this.accountRepo;
+
     // 1. Check uniqueness
-    const existing = await this.accountRepo.findOne({
+    const existing = await accRepo.findOne({
       where: { finAddress: dto.finAddress },
     });
+
     if (existing) {
       if (existing.participantId === participantId) {
         throw new BadRequestException('You already own this FIN address');
@@ -51,7 +58,7 @@ export class AccountsService {
     }
 
     // 2. Create
-    const account = this.accountRepo.create({
+    const account = accRepo.create({
       finAddress: dto.finAddress,
       participantId,
       currency: dto.currency,
@@ -59,7 +66,7 @@ export class AccountsService {
       // kycTier, // Bank-grade: Link tier for limits
     });
 
-    const saved = await this.accountRepo.save(account);
+    const saved = await accRepo.save(account);
 
     // Audit (BSL)
     // await this.complianceService.log('account_create', participantId, participantId, { finAddress: dto.finAddress });

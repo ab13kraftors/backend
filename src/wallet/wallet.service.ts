@@ -25,6 +25,8 @@ import { CustomerService } from 'src/customer/customer.service';
 import { LedgerService } from 'src/ledger/ledger.service';
 import { SYSTEM_POOL_FIN_ADDRESS } from 'src/common/constants';
 import { WalletLimit } from './entities/wallet-limit.entity';
+import { KycService } from 'src/kyc/kyc.service';
+import { KycTier } from 'src/common/enums/kyc.enums';
 
 @Injectable()
 export class WalletService {
@@ -40,26 +42,32 @@ export class WalletService {
     @InjectRepository(Transaction)
     private txRepo: Repository<Transaction>,
 
-    private accService: AccountsService,
-
     @Inject(forwardRef(() => CustomerService))
     private customerService: CustomerService,
 
+    private accService: AccountsService,
     private ledgerService: LedgerService,
+    private kycService: KycService,
 
     private dataSource: DataSource,
   ) {
     Decimal.set({ precision: 18, rounding: Decimal.ROUND_HALF_UP });
   }
 
-  async createWallet(ccuuid: string, participantId: string) {
+  async createWallet(
+    ccuuid: string,
+    participantId: string,
+    manager?: EntityManager,
+  ): Promise<Wallet> {
+    const walletRepo = manager ? manager.getRepository(Wallet) : this.wallRepo;
+
     const finAddress = `WALLET-${ccuuid}`;
 
-    if (await this.wallRepo.findOne({ where: { finAddress } })) {
+    if (await walletRepo.findOne({ where: { finAddress } })) {
       throw new BadRequestException('Wallet already exists');
     }
 
-    const wallet = this.wallRepo.create({
+    const wallet = walletRepo.create({
       ccuuid,
       participantId,
       finAddress,
@@ -68,22 +76,24 @@ export class WalletService {
       pinAttempts: 0,
     });
 
-    const saved = await this.wallRepo.save(wallet);
+    const saved = await walletRepo.save(wallet);
 
-    await this.accService.create(participantId, {
-      finAddress,
-      currency: Currency.SLE,
-    });
+    await this.accService.create(
+      participantId,
+      {
+        finAddress,
+        currency: Currency.SLE,
+      },
+      manager,
+    );
+
+    //  add limit id matches wallet and wallet limit repo
 
     return saved;
   }
 
   async getBalance(walletId: string, participantId: string) {
-    const wallet = await this.wallRepo.findOne({
-      where: { walletId, participantId },
-    });
-
-    if (!wallet) throw new NotFoundException('Wallet not found');
+    const wallet = await this.validateActiveWallet(walletId, participantId);
 
     const balance = await this.ledgerService.getDerivedBalance(
       wallet.finAddress,
@@ -98,11 +108,7 @@ export class WalletService {
   }
 
   async getHistory(walletId: string, participantId: string) {
-    const wallet = await this.wallRepo.findOne({
-      where: { walletId, participantId },
-    });
-
-    if (!wallet) throw new NotFoundException('Wallet not found');
+    const wallet = await this.validateActiveWallet(walletId, participantId);
 
     return this.txRepo.find({
       where: [
@@ -118,10 +124,9 @@ export class WalletService {
     dto: FundWalletDto & { idempotencyKey?: string },
     participantId: string,
   ) {
-    const wallet = await this.wallRepo.findOne({
-      where: { walletId: dto.walletId, participantId },
-    });
-    if (!wallet) throw new NotFoundException('Wallet not found');
+    const wallet = await this.validateActiveWallet(dto.walletId, participantId);
+
+    await this.kycService.requireTier(wallet.ccuuid, KycTier.SOFT_APPROVED);
 
     await this.verifyPinWithLock(wallet, participantId, dto.pin);
 
@@ -193,10 +198,9 @@ export class WalletService {
     dto: WithdrawWalletDto & { idempotencyKey?: string },
     participantId: string,
   ) {
-    const wallet = await this.wallRepo.findOne({
-      where: { walletId: dto.walletId, participantId },
-    });
-    if (!wallet) throw new NotFoundException('Wallet not found');
+    const wallet = await this.validateActiveWallet(dto.walletId, participantId);
+
+    await this.kycService.requireTier(wallet.ccuuid, KycTier.HARD_APPROVED);
 
     await this.verifyPinWithLock(wallet, participantId, dto.pin);
 
@@ -277,23 +281,26 @@ export class WalletService {
   }
 
   async transferWallet(dto: TransferWalletDto, participantId: string) {
-    const sender = await this.wallRepo.findOne({
-      where: { walletId: dto.senderWalletId, participantId },
-    });
-    if (!sender) throw new NotFoundException('Sender wallet not found');
+    const sender = await this.validateActiveWallet(
+      dto.senderWalletId,
+      participantId,
+    );
 
     await this.verifyPinWithLock(sender, participantId, dto.pin);
 
-    const receiver = await this.wallRepo.findOne({
-      where: { finAddress: dto.receiverFinAddress },
-    });
-    if (!receiver) throw new NotFoundException('Receiver not found');
+    const receiver = await this.getWalletByFinAddress(dto.receiverFinAddress);
 
     if (sender.walletId === receiver.walletId) {
       throw new BadRequestException('Cannot send to yourself');
     }
 
     const amount = new Decimal(dto.amount);
+
+    if (amount.gt(5000)) {
+      await this.kycService.requireTier(sender.ccuuid, KycTier.HARD_APPROVED);
+    } else {
+      await this.kycService.requireTier(sender.ccuuid, KycTier.SOFT_APPROVED);
+    }
 
     if (amount.isNaN() || amount.lessThanOrEqualTo(0)) {
       throw new BadRequestException('Invalid amount');
@@ -393,28 +400,62 @@ export class WalletService {
     });
   }
 
-  private async verifyPinWithLock(
+  async getWallet(
+    walletId: string,
+    participantId: string,
+  ): Promise<Wallet | null> {
+    return this.wallRepo.findOne({
+      where: { walletId, participantId },
+    });
+  }
+
+  public async verifyPinWithLock(
     wallet: Wallet,
     participantId: string,
     pin: string,
   ): Promise<void> {
-    try {
-      await this.customerService.verifyPin(wallet.ccuuid, participantId, pin);
-      wallet.pinAttempts = 0;
-    } catch {
-      wallet.pinAttempts = (wallet.pinAttempts ?? 0) + 1;
-      if (wallet.pinAttempts >= 3) {
-        wallet.status = WalletStatus.LOCKED;
-      }
-      throw new BadRequestException(
-        `Invalid PIN. Attempt ${wallet.pinAttempts}/3` +
-          (wallet.status === WalletStatus.LOCKED ? '. Wallet locked.' : ''),
-      );
-    } finally {
-      await this.wallRepo.save(wallet);
-    }
-  }
+    await this.dataSource.transaction(async (manager: EntityManager) => {
+      // 1. Lock the wallet row (pessimistic write) — only one request can proceed
+      const lockedWallet = await manager
+        .createQueryBuilder(Wallet, 'wallet')
+        .where('wallet.walletId = :id AND wallet.participantId = :pid', {
+          id: wallet.walletId,
+          pid: participantId,
+        })
+        .setLock('pessimistic_write') // ← THIS IS THE FIX
+        .getOne();
 
+      if (!lockedWallet) throw new NotFoundException('Wallet not found');
+
+      if (lockedWallet.status === WalletStatus.LOCKED) {
+        throw new BadRequestException(
+          'Wallet is locked. Contact support to unlock.',
+        );
+      }
+
+      try {
+        await this.customerService.verifyPin(
+          lockedWallet.ccuuid,
+          participantId,
+          pin,
+        );
+        lockedWallet.pinAttempts = 0;
+      } catch {
+        lockedWallet.pinAttempts = (lockedWallet.pinAttempts ?? 0) + 1;
+        if (lockedWallet.pinAttempts >= 3) {
+          lockedWallet.status = WalletStatus.LOCKED;
+        }
+        throw new BadRequestException(
+          `Invalid PIN. Attempt ${lockedWallet.pinAttempts}/3` +
+            (lockedWallet.status === WalletStatus.LOCKED
+              ? '. Wallet locked.'
+              : ''),
+        );
+      }
+
+      await manager.save(lockedWallet);
+    });
+  }
   private async calculateDailySent(
     manager: EntityManager,
     finAddress: string,
@@ -433,5 +474,37 @@ export class WalletService {
 
     // TypeORM SUM returns a string for decimal columns in most SQL dialects
     return result?.total || '0';
+  }
+
+  private async validateActiveWallet(
+    walletId: string,
+    participantId: string,
+  ): Promise<Wallet> {
+    const wallet = await this.wallRepo.findOne({
+      where: { walletId, participantId },
+    });
+
+    if (!wallet) throw new NotFoundException('Wallet not found');
+
+    if (wallet.status !== WalletStatus.ACTIVE) {
+      throw new BadRequestException(
+        `Wallet is ${wallet.status.toLowerCase()}. Only ACTIVE wallets can perform operations.`,
+      );
+    }
+
+    return wallet;
+  }
+
+  async getWalletByFinAddress(finAddress: string): Promise<Wallet> {
+    const wallet = await this.wallRepo.findOne({
+      where: { finAddress },
+    });
+
+    if (!wallet) throw new NotFoundException('Receiver wallet not found');
+
+    if (wallet.status !== WalletStatus.ACTIVE)
+      throw new BadRequestException('Receiver wallet not active');
+
+    return wallet;
   }
 }

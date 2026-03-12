@@ -1,6 +1,6 @@
 import os
 
-def merge_ts_to_txt(output_file="all_typescript_code.txt", src_folder="src"):
+def merge_ts_to_txt(output_file="all_typescript_code.ts", src_folder="src"):
     if not os.path.exists(src_folder):
         print(f"Error: Folder '{src_folder}' not found.")
         return

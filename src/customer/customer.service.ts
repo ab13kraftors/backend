@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Customer } from './entities/customer.entity';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CustomerStatus, CustomerType } from 'src/common/enums/customer.enums';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
@@ -24,14 +24,9 @@ import { WalletService } from 'src/wallet/wallet.service';
 @Injectable()
 export class CustomerService {
   constructor(
-    // Inject datasource for DB transactions
     private readonly dataSource: DataSource,
-
-    // Inject Customer repository
     @InjectRepository(Customer)
     private customerRepository: Repository<Customer>,
-
-    // Inject Wallet service
     private walletService: WalletService,
   ) {}
 
@@ -41,32 +36,38 @@ export class CustomerService {
     dto: CreateCustomerDto,
     participantId: string,
   ): Promise<Customer> {
-    const existing = await this.customerRepository.findOne({
-      where: { externalId: dto.externalId, participantId },
+    return this.dataSource.transaction(async (manager) => {
+      const existing = await this.customerRepository.findOne({
+        where: { externalId: dto.externalId, participantId },
+      });
+
+      // Prevent duplicate externalId for same participant
+      if (existing) {
+        throw new ConflictException('Already exists');
+      }
+
+      // Validate business rules
+      this.validateCreateRules(dto);
+
+      const customer = this.customerRepository.create({
+        ...dto,
+        participantId,
+        status: CustomerStatus.INACTIVE,
+        documentValidityDate: new Date(dto.documentValidityDate),
+        dob: dto.dob ? new Date(dto.dob) : undefined,
+      });
+
+      const savedCustomer = await this.customerRepository.save(customer);
+
+      // Create wallet for customer
+      await this.walletService.createWallet(
+        savedCustomer.uuid,
+        participantId,
+        manager,
+      );
+
+      return savedCustomer;
     });
-
-    // Prevent duplicate externalId for same participant
-    if (existing) {
-      throw new ConflictException('Already exists');
-    }
-
-    // Validate business rules
-    this.validateCreateRules(dto);
-
-    const customer = this.customerRepository.create({
-      ...dto,
-      participantId,
-      status: CustomerStatus.INACTIVE,
-      documentValidityDate: new Date(dto.documentValidityDate),
-      dob: dto.dob ? new Date(dto.dob) : undefined,
-    });
-
-    const savedCustomer = await this.customerRepository.save(customer);
-
-    // Create wallet for customer
-    await this.walletService.createWallet(savedCustomer.uuid, participantId);
-
-    return savedCustomer;
   }
 
   // ================== update ==================
@@ -237,6 +238,7 @@ export class CustomerService {
       const wallet = await this.walletService.createWallet(
         savedCustomer.uuid,
         participantId,
+        manager,
       );
 
       return {

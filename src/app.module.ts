@@ -23,6 +23,10 @@ import { EmailModule } from './common/email/email.module';
 import { KycModule } from './kyc/kyc.module';
 import { LedgerModule } from './ledger/ledger.module';
 import { ComplianceModule } from './compliance/compliance.module';
+// import { RolesGuard } from './common/guards/auth/roles.gaurd';
+import { CardModule } from './card/card.module';
+import { LoadModule } from './load/load.module';
+import { WithdrawModule } from './withdraw/withdraw.module';
 
 @Module({
   imports: [
@@ -52,6 +56,9 @@ import { ComplianceModule } from './compliance/compliance.module';
     KycModule,
     LedgerModule,
     ComplianceModule,
+    CardModule,
+    LoadModule,
+    WithdrawModule,
   ],
   controllers: [AppController],
   providers: [
@@ -65,6 +72,10 @@ import { ComplianceModule } from './compliance/compliance.module';
       provide: APP_GUARD,
       useClass: ParticipantGuard,
     },
+    //     {
+    //   provide: APP_GUARD,
+    //   useClass: RolesGuard,
+    // },
     {
       provide: APP_INTERCEPTOR,
       useClass: EncryptionInterceptor,

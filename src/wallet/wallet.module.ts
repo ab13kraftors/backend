@@ -8,12 +8,14 @@ import { AccountsModule } from 'src/accounts/accounts.module';
 import { CustomerModule } from 'src/customer/customer.module';
 import { WalletLimit } from './entities/wallet-limit.entity';
 import { LedgerModule } from 'src/ledger/ledger.module';
+import { KycModule } from 'src/kyc/kyc.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Wallet, Transaction, WalletLimit]),
     AccountsModule,
     LedgerModule,
+    KycModule,
     forwardRef(() => CustomerModule),
   ],
   providers: [WalletService],

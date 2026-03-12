@@ -23,3 +23,10 @@ export enum CrDbType {
   CREDIT = 'CREDIT',
   DEBIT = 'DEBIT',
 }
+
+export enum CardTransaction {
+  INITIATED = 'INITIATED',
+  GATEWAY_SUCCESS = 'GATEWAY_SUCCESS',
+  FAILED = 'FAILED',
+  COMPLETED = 'COMPLETED',
+}
