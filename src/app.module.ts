@@ -23,10 +23,12 @@ import { EmailModule } from './common/email/email.module';
 import { KycModule } from './kyc/kyc.module';
 import { LedgerModule } from './ledger/ledger.module';
 import { ComplianceModule } from './compliance/compliance.module';
-// import { RolesGuard } from './common/guards/auth/roles.gaurd';
 import { CardModule } from './card/card.module';
 import { LoadModule } from './load/load.module';
 import { WithdrawModule } from './withdraw/withdraw.module';
+import { RolesGuard } from './common/guards/auth/roles.gaurd';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { LoanModule } from './loan/loan.module';
 
 @Module({
   imports: [
@@ -59,6 +61,7 @@ import { WithdrawModule } from './withdraw/withdraw.module';
     CardModule,
     LoadModule,
     WithdrawModule,
+    LoanModule,
   ],
   controllers: [AppController],
   providers: [
@@ -66,16 +69,20 @@ import { WithdrawModule } from './withdraw/withdraw.module';
     AppService,
     {
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,
+      useClass: JwtAuthGuard,
     },
     {
       provide: APP_GUARD,
       useClass: ParticipantGuard,
     },
-    //     {
-    //   provide: APP_GUARD,
-    //   useClass: RolesGuard,
-    // },
+    {
+      provide: APP_GUARD,
+      useClass: RolesGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
     {
       provide: APP_INTERCEPTOR,
       useClass: EncryptionInterceptor,

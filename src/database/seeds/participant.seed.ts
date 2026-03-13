@@ -1,6 +1,7 @@
 import { Participant } from 'src/auth/entities/participant.entity';
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import { Role } from 'src/common/enums/auth.enums';
 
 // ================== seedParticipant ==================
 // Seeds a default participant (admin) into the database
@@ -24,7 +25,7 @@ export async function seedParticipant(dataSource: DataSource) {
       participantId: 'BANK_SL_001',
       username: 'admin',
       passwordHash,
-      roles: 'admin',
+      roles: [Role.ADMIN],
       isActive: true,
     }),
   );

@@ -8,6 +8,7 @@ import { CronExpression } from '@nestjs/schedule';
 import { Cron } from '@nestjs/schedule';
 import { SmsService } from 'src/common/sms/sms.service';
 import { EmailService } from 'src/common/email/email.service';
+import * as crypto from 'crypto'; 
 
 @Injectable()
 export class OtpService {
@@ -42,7 +43,7 @@ export class OtpService {
     await this.otpRepo.delete({ participantId, ccuuid });
 
     // Generate 6 digit OTP
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpCode = crypto.randomInt(100000, 999999).toString();
 
     // Create OTP entity with 5 minute expiry
     const otp = this.otpRepo.create({

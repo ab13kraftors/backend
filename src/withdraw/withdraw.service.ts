@@ -12,7 +12,10 @@ import { KycService } from 'src/kyc/kyc.service';
 
 import { KycTier } from 'src/common/enums/kyc.enums';
 import { WITHDRAWAL_POOL_FIN_ADDRESS } from 'src/common/constants';
-import { CardTransaction } from 'src/common/enums/transaction.enums';
+import {
+  CardTransaction,
+  TransactionType,
+} from 'src/common/enums/transaction.enums';
 
 @Injectable()
 export class WithdrawService {
@@ -41,28 +44,31 @@ export class WithdrawService {
     return this.dataSource.transaction(async (manager) => {
       const txId = `WD-${Date.now()}`;
 
-      await this.ledgerService.postTransfer({
-        txId,
-        reference: 'Wallet withdrawal',
-        participantId,
-        postedBy: 'withdraw-service',
+      const transfer = await this.ledgerService.postTransfer(
+        {
+          txId,
+          reference: 'Wallet withdrawal',
+          participantId,
+          postedBy: 'withdraw-service',
 
-        legs: [
-          {
-            finAddress: wallet.finAddress,
-            amount: dto.amount,
-            isCredit: true,
-            memo: 'Withdrawal debit',
-          },
+          legs: [
+            {
+              finAddress: wallet.finAddress,
+              amount: dto.amount,
+              isCredit: false, // DEBIT — money LEAVING the wallet
+              memo: 'Withdrawal debit',
+            },
 
-          {
-            finAddress: WITHDRAWAL_POOL_FIN_ADDRESS,
-            amount: dto.amount,
-            isCredit: false,
-            memo: 'Withdrawal settlement',
-          },
-        ],
-      });
+            {
+              finAddress: WITHDRAWAL_POOL_FIN_ADDRESS,
+              amount: dto.amount,
+              isCredit: true, // CREDIT — money ARRIVING at settlement pool
+              memo: 'Withdrawal settlement',
+            },
+          ],
+        },
+        manager,
+      );
 
       const withdrawal = this.withdrawRepo.create({
         participantId,
@@ -70,10 +76,16 @@ export class WithdrawService {
         ccuuid: wallet.ccuuid,
         amount: dto.amount,
         destination: dto.destination,
+        type: TransactionType.WALLET_WITHDRAWAL,
         status: CardTransaction.INITIATED,
       });
 
-      return manager.save(withdrawal);
+      if (transfer.journalId) {
+        withdrawal.status = CardTransaction.COMPLETED;
+        return await manager.save(withdrawal);
+      } else {
+        throw new Error('Ledger transfer failed to return journalId');
+      }
     });
   }
 }

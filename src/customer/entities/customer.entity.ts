@@ -63,7 +63,7 @@ export class Customer {
   @Column()
   msisdn: string;
 
-  @Column({ nullable: true })
+  @Column({ nullable: true, type: 'boolean' })
   msisdnIsOwned?: boolean;
 
   @Column({ nullable: true, select: false })

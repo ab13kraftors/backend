@@ -12,7 +12,10 @@ import { CardService } from 'src/card/card.service';
 import { KycService } from 'src/kyc/kyc.service';
 import { LoadWalletDto } from './dto/load-wallet-dto';
 import { KycTier } from 'src/common/enums/kyc.enums';
-import { CardTransaction } from 'src/common/enums/transaction.enums';
+import {
+  CardTransaction,
+  TransactionType,
+} from 'src/common/enums/transaction.enums';
 import { WalletStatus } from 'src/common/enums/banking.enums';
 import { CARD_GATEWAY_POOL_FIN_ADDRESS, TX_PREFIX } from 'src/common/constants';
 
@@ -74,6 +77,7 @@ export class LoadService {
         ccuuid: wallet.ccuuid,
         walletId: wallet.walletId,
         amount: dto.amount,
+        type: TransactionType.CARD_LOAD,
         status: CardTransaction.INITIATED,
       }),
     );
@@ -95,6 +99,7 @@ export class LoadService {
       // 6. Update Internal Ledger (Atomic Transaction)
       return await this.dataSource.transaction(async (manager) => {
         const txId = `${TX_PREFIX.LOAD}-${loadTx.id}`;
+
         const transferResult = await this.ledgerService.postTransfer(
           {
             txId,
@@ -106,13 +111,13 @@ export class LoadService {
               {
                 finAddress: CARD_GATEWAY_POOL_FIN_ADDRESS, // System Liability Account
                 amount: dto.amount,
-                isCredit: true,
-                memo: 'Gateway collection',
+                isCredit: false, // DEBIT — money LEAVING the gateway pool
+                memo: 'Gateway disbursement to wallet',
               },
               {
                 finAddress: wallet.finAddress, // User Wallet Account
                 amount: dto.amount,
-                isCredit: false,
+                isCredit: true, // CREDIT — money ARRIVING at user wallet
                 memo: 'Wallet load success',
               },
             ],
@@ -123,11 +128,10 @@ export class LoadService {
         if (!transferResult?.journalId) {
           loadTx.status = CardTransaction.FAILED;
           throw new Error('Ledger transfer failed');
-        } else {
-          // 7. Finalize Status
-          loadTx.status = CardTransaction.COMPLETED;
-          loadTx.gatewayRef = gatewayResult.reference;
         }
+
+        loadTx.status = CardTransaction.COMPLETED;
+        loadTx.gatewayRef = gatewayResult.reference;
         return await manager.save(loadTx);
       });
     } catch (error) {
@@ -141,6 +145,6 @@ export class LoadService {
   private async chargeGateway(token: string, amount: string, key: string) {
     // Simulate API call to Stripe/Paystack/Flutterwave
     await new Promise((r) => setTimeout(r, 100));
-    return { success: true, reference: `GTW-${Date.now}` };
+    return { success: true, reference: `GTW-${Date.now()}` };
   }
 }

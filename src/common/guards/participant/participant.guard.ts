@@ -17,7 +17,6 @@ export class ParticipantGuard implements CanActivate {
   ) {}
 
   // ================== canActivate ==================
-  // Validates participant-id header before allowing request
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<Request>();
     const bankId = req.headers['participant-id'] as string;
@@ -44,15 +43,15 @@ export class ParticipantGuard implements CanActivate {
     const request = req as any;
     request.participantId = bank.participantId;
     request.bankId = bank.participantId;
-    request.name = bank.username; // Using username as name
-    request.roles = rolesArray;
+    // request.name = bank.username; // Using username as name
+    // request.roles = rolesArray;
 
-    // 2. Attach to req.user for NestJS standard usage
-    req.user = {
-      id: bank.participantId,
-      name: bank.username,
-      roles: rolesArray,
-    };
+    // // 2. Attach to req.user for NestJS standard usage
+    // req.user = {
+    //   id: bank.participantId,
+    //   name: bank.username,
+    //   roles: rolesArray,
+    // };
 
     return true;
   }

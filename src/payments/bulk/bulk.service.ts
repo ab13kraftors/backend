@@ -110,13 +110,13 @@ export class BulkService {
               {
                 finAddress: tx.senderFinAddress,
                 amount: String(tx.amount),
-                isCredit: true, // DEBIT leg — money leaving sender
+                isCredit: false, // DEBIT leg — money leaving sender
                 memo: `Bulk payment to ${tx.receiverAlias}`,
               },
               {
                 finAddress: tx.receiverFinAddress,
                 amount: String(tx.amount),
-                isCredit: false, // CREDIT leg — money arriving at receiver
+                isCredit: true, // CREDIT leg — money arriving at receiver
                 memo: `Bulk payment from ${tx.senderAlias}`,
               },
             ],

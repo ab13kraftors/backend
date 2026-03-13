@@ -104,13 +104,13 @@ export class QrService {
           {
             finAddress: savedTx.senderFinAddress,
             amount: String(savedTx.amount),
-            isCredit: true, // DEBIT — money leaving sender
+            isCredit: false, // DEBIT — money leaving sender
             memo: `QR payment to ${savedTx.receiverAlias}`,
           },
           {
             finAddress: savedTx.receiverFinAddress,
             amount: String(savedTx.amount),
-            isCredit: false, // CREDIT — money arriving at merchant
+            isCredit: true, // CREDIT — money arriving at merchant
             memo: `QR payment from ${savedTx.senderAlias}`,
           },
         ],

@@ -105,13 +105,13 @@ export class RtpService {
           {
             finAddress: savedTx.senderFinAddress,
             amount: String(savedTx.amount),
-            isCredit: true, // DEBIT — money leaving payer
+            isCredit: false, // DEBIT — money leaving payer
             memo: `RTP payment to ${savedTx.receiverAlias}`,
           },
           {
             finAddress: savedTx.receiverFinAddress,
             amount: String(savedTx.amount),
-            isCredit: false, // CREDIT — money arriving at requester
+            isCredit: true, // CREDIT — money arriving at requester
             memo: `RTP payment from ${savedTx.senderAlias}`,
           },
         ],

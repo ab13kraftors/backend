@@ -1,3 +1,4 @@
+import { Role } from 'src/common/enums/auth.enums';
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -21,8 +22,8 @@ export class Participant {
   @Column()
   passwordHash: string;
 
-  @Column({ default: 'participant' })
-  roles: string;
+  @Column({ type: 'simple-array', default: Role.CUSTOMER })
+  roles: string[];
 
   @Column({ default: true })
   isActive: boolean;

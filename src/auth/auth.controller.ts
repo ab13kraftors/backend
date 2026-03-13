@@ -1,4 +1,12 @@
-import { Controller, Post, Delete, Body, Res, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Delete,
+  Body,
+  Res,
+  UseGuards,
+  Req,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -31,6 +39,19 @@ export class AuthController {
     // Set JWT token as HTTP-only cookie
     res.cookie(COOKIE_NAME, token, COOKIE_OPTS);
 
+    return { success: true };
+  }
+
+  // ================== refresh ==================
+  @Post('refresh')
+  @UseGuards(JwtAuthGuard) // Requires a currently valid token to refresh
+  async refresh(@Req() req: any, @Res({ passthrough: true }) res: any) {
+    // Generate a new token based on the existing user's data
+    const newToken = await this.authService.login({
+      username: req.user.username,
+    } as any);
+
+    res.cookie(COOKIE_NAME, newToken, COOKIE_OPTS);
     return { success: true };
   }
 

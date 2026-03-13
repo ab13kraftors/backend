@@ -150,13 +150,13 @@ export class WalletService {
           {
             finAddress: this.SYSTEM_POOL_FIN,
             amount: amountStr,
-            isCredit: true, // debit system
+            isCredit: false, // debit system
             memo: `Funded ${wallet.finAddress}`,
           },
           {
             finAddress: wallet.finAddress,
             amount: amountStr,
-            isCredit: false, // credit wallet
+            isCredit: true, // credit wallet
             memo: 'Funding from system pool',
           },
         ],
@@ -236,13 +236,13 @@ export class WalletService {
           {
             finAddress: wallet.finAddress,
             amount: amountStr,
-            isCredit: true, // debit wallet
+            isCredit: false, // debit wallet
             memo: `Withdrawal to system`,
           },
           {
             finAddress: this.SYSTEM_POOL_FIN,
             amount: amountStr,
-            isCredit: false, // credit system
+            isCredit: true, // credit system
             memo: `Withdrawal from ${wallet.finAddress}`,
           },
         ],
@@ -354,13 +354,13 @@ export class WalletService {
           {
             finAddress: sender.finAddress,
             amount: amountStr,
-            isCredit: true,
+            isCredit: false,
             memo: `Sent to ${receiver.ccuuid}`,
           },
           {
             finAddress: receiver.finAddress,
             amount: amountStr,
-            isCredit: false,
+            isCredit: true,
             memo: `Received from ${sender.ccuuid}`,
           },
         ],

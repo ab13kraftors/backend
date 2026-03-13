@@ -52,10 +52,11 @@ import { EmailModule } from './common/email/email.module';
 import { KycModule } from './kyc/kyc.module';
 import { LedgerModule } from './ledger/ledger.module';
 import { ComplianceModule } from './compliance/compliance.module';
-// import { RolesGuard } from './common/guards/auth/roles.gaurd';
 import { CardModule } from './card/card.module';
 import { LoadModule } from './load/load.module';
 import { WithdrawModule } from './withdraw/withdraw.module';
+import { RolesGuard } from './common/guards/auth/roles.gaurd';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
 
 @Module({
   imports: [
@@ -95,16 +96,20 @@ import { WithdrawModule } from './withdraw/withdraw.module';
     AppService,
     {
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,
+      useClass: JwtAuthGuard,
     },
     {
       provide: APP_GUARD,
       useClass: ParticipantGuard,
     },
-    //     {
-    //   provide: APP_GUARD,
-    //   useClass: RolesGuard,
-    // },
+    {
+      provide: APP_GUARD,
+      useClass: RolesGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
     {
       provide: APP_INTERCEPTOR,
       useClass: EncryptionInterceptor,
@@ -449,7 +454,7 @@ export class CustomerService {
     });
 
     if (!existing) {
-      throw new ConflictException('Customer not found');
+      throw new NotFoundException('Customer not found');
     }
 
     const effectiveType = dto.type ?? existing.type;
@@ -568,7 +573,7 @@ export class CustomerService {
 
       const savedCustomer = await manager.save(customer);
 
-      // Check if alias already exists
+      // Check if alias already exists -- To check for globally
       const existingAlias = await manager.findOne(Alias, {
         where: {
           participantId,
@@ -638,7 +643,10 @@ export class CustomerService {
       );
     }
 
-    const saltRounds = Number(process.env.PIN_SALT_ROUNDS ?? 12);
+    const saltRounds = Number(process.env.PIN_SALT_ROUNDS);
+    if (!Number.isInteger(saltRounds) || saltRounds <= 0) {
+      throw new Error('Invalid PIN_SALT_ROUNDS');
+    } 
 
     // Hash and store PIN
     customer.pinHash = await bcrypt.hash(dto.pin, saltRounds);
@@ -840,7 +848,7 @@ export class VerifyPinDto {
   @IsString()
   @Length(6, 6)
   @Matches(/^\d{6}$/)
-  newPin: string;
+  pin: string;
 }
 
 /////////////////////////
@@ -852,6 +860,7 @@ import {
   IsBoolean,
   IsDateString,
   ValidateIf,
+  IsEmail,
 } from 'class-validator';
 import {
   CustomerType,
@@ -919,9 +928,11 @@ export class UpdateCustomerDto {
   dob?: string;
 
   @IsOptional()
+  @IsEmail()
   firstEmail?: string;
 
   @IsOptional()
+  @IsEmail()
   secondEmail?: string;
 
   // COMPANY
@@ -999,7 +1010,7 @@ export class Customer {
   @Column()
   msisdn: string;
 
-  @Column({ nullable: true })
+  @Column({ nullable: true, type: 'boolean' })
   msisdnIsOwned?: boolean;
 
   @Column({ nullable: true, select: false })
@@ -1279,7 +1290,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
-import Decimal from 'decimal.js'; // npm install decimal.js
+import Decimal from 'decimal.js';
 import { LedgerJournal } from './entities/ledger-journal.entity';
 import { LedgerPosting } from './entities/ledger-posting.entity';
 import { Account } from '../accounts/entities/account.entity';
@@ -1287,6 +1298,22 @@ import { LedgerTransferInput, LedgerTransferResult } from './ledger.types';
 import { Currency } from 'src/common/enums/transaction.enums';
 import { AccountsService } from 'src/accounts/accounts.service';
 import * as crypto from 'crypto';
+
+// ─── Internal Types
+
+interface TransferLeg {
+  finAddress: string;
+  amount: string;
+  isCredit: boolean; // true = CREDIT (arriving), false = DEBIT (leaving)
+  memo?: string;
+}
+
+interface ReverseLeg {
+  finAddress: string;
+  amount: string;
+  isCredit: boolean;
+  memo: string;
+}
 
 @Injectable()
 export class LedgerService {
@@ -1305,12 +1332,13 @@ export class LedgerService {
 
     private dataSource: DataSource,
   ) {
-    // Set decimal.js global precision (adjust as needed for SLE)
     Decimal.set({ precision: 18, rounding: Decimal.ROUND_HALF_UP });
   }
 
+  // ─── Public: Balance
+
   /**
-   * Get current balance by finAddress (non-transactional usage)
+   * Get current balance by finAddress (non-transactional usage).
    */
   async getDerivedBalance(finAddress: string): Promise<string> {
     const account = await this.accountRepo.findOne({
@@ -1329,7 +1357,7 @@ export class LedgerService {
   }
 
   /**
-   * Get balance using specific manager (for transactions)
+   * Get balance using a specific EntityManager (for use inside transactions).
    */
   async getDerivedBalanceByAccountId(
     manager: EntityManager,
@@ -1347,8 +1375,12 @@ export class LedgerService {
     return result?.balance?.toString() ?? '0';
   }
 
+  // ─── Public: Transfers
+
   /**
-   * Atomic multi-leg transfer
+   * Atomic multi-leg double-entry transfer.
+   * Pass txManager when calling from inside an existing transaction to share
+   * the same DB transaction; omit it for standalone usage.
    */
   async postTransfer(
     input: LedgerTransferInput,
@@ -1357,6 +1389,7 @@ export class LedgerService {
     const manager = txManager || this.dataSource.manager;
 
     return manager.transaction('SERIALIZABLE', async (innerManager) => {
+      // ── Validate input
       if (!input.txId?.trim()) {
         throw new BadRequestException('txId is required');
       }
@@ -1373,68 +1406,25 @@ export class LedgerService {
         }
       }
 
-      // Idempotency
-      if (input.idempotencyKey) {
-        const existing = await innerManager.findOne(LedgerJournal, {
-          where: { idempotencyKey: input.idempotencyKey },
-        });
-        if (existing) {
-          return {
-            journalId: existing.journalId,
-            txId: existing.txId,
-            status: 'already_processed' as const,
-          };
-        }
-      }
+      // ── Idempotency check
+      const idempotentResult = await this.checkIdempotency(
+        innerManager,
+        input.idempotencyKey,
+      );
+      if (idempotentResult) return idempotentResult;
 
-      // Lock accounts
-      const accounts = new Map<string, Account>();
-      for (const leg of input.legs) {
-        const acc = await innerManager
-          .createQueryBuilder(Account, 'a')
-          .where('a.finAddress = :fin', { fin: leg.finAddress })
-          .setLock('pessimistic_write')
-          .getOne();
+      // ── Lock accounts (pessimistic write)
+      const accounts = await this.lockAccountsByFinAddress(
+        innerManager,
+        input.legs.map((l) => l.finAddress),
+      );
 
-        if (!acc) {
-          throw new NotFoundException(`Account not found: ${leg.finAddress}`);
-        }
-
-        if (acc.currency !== Currency.SLE) {
-          throw new BadRequestException(
-            `Only SLE supported. Found: ${acc.currency}`,
-          );
-        }
-
-        accounts.set(leg.finAddress, acc);
-      }
-
-      // Balance checks + invariant (inside transaction!)
-      let totalDebit = new Decimal(0);
-      let totalCredit = new Decimal(0);
-
-      for (const leg of input.legs) {
-        const acc = accounts.get(leg.finAddress)!;
-        const currentStr = await this.getDerivedBalanceByAccountId(
-          innerManager,
-          acc.accountId,
-        );
-        const current = new Decimal(currentStr);
-        const amount = new Decimal(leg.amount);
-
-        if (leg.isCredit) {
-          // DEBIT leg → money leaving
-          if (current.lessThan(amount)) {
-            throw new BadRequestException(
-              `Insufficient funds on ${leg.finAddress}: ${current.toFixed(2)} < ${amount.toFixed(2)}`,
-            );
-          }
-          totalDebit = totalDebit.add(amount);
-        } else {
-          // CREDIT leg → money arriving
-          totalCredit = totalCredit.add(amount);
-        }
-      }
+      // ── Balance checks + double-entry invariant
+      const { totalDebit, totalCredit } = await this.checkBalancesAndInvariant(
+        innerManager,
+        input.legs,
+        accounts,
+      );
 
       if (!totalDebit.equals(totalCredit)) {
         throw new InternalServerErrorException(
@@ -1442,7 +1432,7 @@ export class LedgerService {
         );
       }
 
-      // Create journal
+      // ── Persist journal + postings
       const journal = innerManager.create(LedgerJournal, {
         txId: input.txId,
         idempotencyKey: input.idempotencyKey,
@@ -1452,15 +1442,7 @@ export class LedgerService {
         postedAt: new Date(),
       });
 
-      journal.postings = input.legs.map((leg) => {
-        const acc = accounts.get(leg.finAddress)!;
-        const posting = new LedgerPosting();
-        posting.accountId = acc.accountId;
-        posting.amount = Number(leg.amount);
-        posting.side = leg.isCredit ? 'DEBIT' : 'CREDIT';
-        posting.memo = leg.memo ?? undefined;
-        return posting;
-      });
+      journal.postings = this.buildPostings(input.legs, accounts);
 
       await innerManager.save(journal);
 
@@ -1473,7 +1455,9 @@ export class LedgerService {
   }
 
   /**
-   * Reverse / refund existing transfer
+   * Reverse / refund an existing transfer by txId.
+   * Swaps each DEBIT↔CREDIT leg and posts a new journal that references the
+   * original, marking it as reversed.
    */
   async reverseTransfer(input: {
     originalTxId: string;
@@ -1483,6 +1467,7 @@ export class LedgerService {
     idempotencyKey?: string;
   }): Promise<LedgerTransferResult> {
     return this.dataSource.transaction('SERIALIZABLE', async (manager) => {
+      // ── Load original journal
       const original = await manager.findOne(LedgerJournal, {
         where: { txId: input.originalTxId },
         relations: ['postings'],
@@ -1500,68 +1485,34 @@ export class LedgerService {
         );
       }
 
-      if (input.idempotencyKey) {
-        const existing = await manager.findOne(LedgerJournal, {
-          where: { idempotencyKey: input.idempotencyKey },
-        });
-        if (existing) {
-          return {
-            journalId: existing.journalId,
-            txId: existing.txId,
-            status: 'already_processed' as const,
-          };
-        }
-      }
+      // ── Idempotency check
+      const idempotentResult = await this.checkIdempotency(
+        manager,
+        input.idempotencyKey,
+      );
+      if (idempotentResult) return idempotentResult;
 
-      const accounts = new Map<string, Account>();
-      for (const p of original.postings) {
-        const acc = await manager
-          .createQueryBuilder(Account, 'a')
-          .where('a.accountId = :id', { id: p.accountId })
-          .setLock('pessimistic_write')
-          .getOne();
+      // ── Lock accounts by accountId (we have postings, not legs)
+      const accounts = await this.lockAccountsByAccountId(
+        manager,
+        original.postings.map((p) => p.accountId),
+      );
 
-        if (!acc) throw new NotFoundException(`Account gone: ${p.accountId}`);
-
-        accounts.set(p.accountId, acc);
-      }
-
-      const reverseLegs: {
-        finAddress: string;
-        amount: string;
-        isCredit: boolean;
-        memo: string;
-      }[] = [];
-
-      for (const p of original.postings) {
+      // ── Build reversed legs
+      const reverseLegs: ReverseLeg[] = original.postings.map((p) => {
         const acc = accounts.get(p.accountId)!;
-        reverseLegs.push({
+        return {
           finAddress: acc.finAddress,
           amount: p.amount.toString(),
-          isCredit: p.side === 'DEBIT' ? false : true,
+          isCredit: p.side !== 'CREDIT', // flip each side
           memo: `Reversal of ${input.originalTxId} – ${input.reason}`,
-        });
-      }
+        };
+      });
 
-      // Balance check for reverse debits
-      for (const leg of reverseLegs) {
-        if (leg.isCredit) {
-          // now debiting this account
-          const currentStr = await this.getDerivedBalanceByAccountId(
-            manager,
-            accounts.get(leg.finAddress)!.accountId,
-          );
-          const current = new Decimal(currentStr);
-          const amount = new Decimal(leg.amount);
+      // ── Balance check on the new debit legs
+      await this.checkReverseBalances(manager, reverseLegs, accounts);
 
-          if (current.lessThan(amount)) {
-            throw new BadRequestException(
-              `Cannot reverse: insufficient balance on ${leg.finAddress} (${current.toFixed(2)} < ${amount.toFixed(2)})`,
-            );
-          }
-        }
-      }
-
+      // ── Persist reverse journal + postings
       const reverseTxId = `REV-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
 
       const reverseJournal = manager.create(LedgerJournal, {
@@ -1574,15 +1525,7 @@ export class LedgerService {
         reversesTxId: input.originalTxId,
       });
 
-      reverseJournal.postings = reverseLegs.map((leg) => {
-        const acc = accounts.get(leg.finAddress)!;
-        const posting = new LedgerPosting();
-        posting.accountId = acc.accountId;
-        posting.amount = Number(leg.amount);
-        posting.side = leg.isCredit ? 'DEBIT' : 'CREDIT';
-        posting.memo = leg.memo ?? undefined;
-        return posting;
-      });
+      reverseJournal.postings = this.buildPostings(reverseLegs, accounts);
 
       original.reversedByTxId = reverseTxId;
 
@@ -1604,20 +1547,193 @@ export class LedgerService {
     });
   }
 
-  // ─── Helpers ──────────────────────────────────────────────────────────────
+  // ─── Private: Reusable Helpers
 
+  /**
+   * Check for an existing journal with the given idempotency key.
+   * Returns the short-circuit result if already processed, or null to continue.
+   */
+  private async checkIdempotency(
+    manager: EntityManager,
+    idempotencyKey?: string,
+  ): Promise<LedgerTransferResult | null> {
+    if (!idempotencyKey) return null;
+
+    const existing = await manager.findOne(LedgerJournal, {
+      where: { idempotencyKey },
+    });
+
+    if (existing) {
+      return {
+        journalId: existing.journalId,
+        txId: existing.txId,
+        status: 'already_processed' as const,
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Lock a set of accounts by their finAddress using pessimistic_write.
+   * Returns a Map<finAddress, Account> for downstream use.
+   * Validates each account exists and is in SLE currency.
+   */
+  private async lockAccountsByFinAddress(
+    manager: EntityManager,
+    finAddresses: string[],
+  ): Promise<Map<string, Account>> {
+    const accounts = new Map<string, Account>();
+
+    for (const finAddress of finAddresses) {
+      const acc = await manager
+        .createQueryBuilder(Account, 'a')
+        .where('a.finAddress = :fin', { fin: finAddress })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!acc) {
+        throw new NotFoundException(`Account not found: ${finAddress}`);
+      }
+
+      if (acc.currency !== Currency.SLE) {
+        throw new BadRequestException(
+          `Only SLE supported. Found: ${acc.currency}`,
+        );
+      }
+
+      accounts.set(finAddress, acc);
+    }
+
+    return accounts;
+  }
+
+  /**
+   * Lock a set of accounts by their accountId using pessimistic_write.
+   * Returns a Map<accountId, Account> for downstream use.
+   * Used by reverseTransfer where we have postings (accountId) not legs (finAddress).
+   */
+  private async lockAccountsByAccountId(
+    manager: EntityManager,
+    accountIds: string[],
+  ): Promise<Map<string, Account>> {
+    const accounts = new Map<string, Account>();
+
+    for (const accountId of accountIds) {
+      const acc = await manager
+        .createQueryBuilder(Account, 'a')
+        .where('a.accountId = :id', { id: accountId })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!acc) {
+        throw new NotFoundException(`Account not found: ${accountId}`);
+      }
+
+      accounts.set(accountId, acc);
+    }
+
+    return accounts;
+  }
+
+  /**
+   * For each leg, verify sufficient balance on DEBIT legs and accumulate
+   * debit/credit totals for double-entry invariant checking.
+   * Accounts map is keyed by finAddress.
+   */
+  private async checkBalancesAndInvariant(
+    manager: EntityManager,
+    legs: TransferLeg[],
+    accounts: Map<string, Account>,
+  ): Promise<{ totalDebit: Decimal; totalCredit: Decimal }> {
+    let totalDebit = new Decimal(0);
+    let totalCredit = new Decimal(0);
+
+    for (const leg of legs) {
+      const acc = accounts.get(leg.finAddress)!;
+      const amount = new Decimal(leg.amount);
+
+      if (!leg.isCredit) {
+        const current = new Decimal(
+          await this.getDerivedBalanceByAccountId(manager, acc.accountId),
+        );
+
+        if (current.lessThan(amount)) {
+          throw new BadRequestException(
+            `Insufficient funds on ${leg.finAddress}: ${current.toFixed(2)} < ${amount.toFixed(2)}`,
+          );
+        }
+
+        totalDebit = totalDebit.add(amount);
+      } else {
+        // CREDIT leg — money is arriving at this account
+        totalCredit = totalCredit.add(amount);
+      }
+    }
+
+    return { totalDebit, totalCredit };
+  }
+
+  /**
+   * For reversal legs, check that every new DEBIT leg has sufficient balance.
+   * Accounts map is keyed by finAddress (derived from the reverseLegs).
+   */
+  private async checkReverseBalances(
+    manager: EntityManager,
+    reverseLegs: ReverseLeg[],
+    accounts: Map<string, Account>,
+  ): Promise<void> {
+    for (const leg of reverseLegs) {
+      if (leg.isCredit) continue;
+
+      const acc = accounts.get(leg.finAddress)!;
+      const current = new Decimal(
+        await this.getDerivedBalanceByAccountId(manager, acc.accountId),
+      );
+      const amount = new Decimal(leg.amount);
+
+      if (current.lessThan(amount)) {
+        throw new BadRequestException(
+          `Cannot reverse: insufficient balance on ${leg.finAddress} (${current.toFixed(2)} < ${amount.toFixed(2)})`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Build LedgerPosting objects from a set of legs and their resolved accounts.
+   * Accepts any leg shape that has finAddress, amount, isCredit, and optional memo.
+   * The accounts map must be keyed by finAddress.
+   */
+  private buildPostings(
+    legs: Array<{
+      finAddress: string;
+      amount: string;
+      isCredit: boolean;
+      memo?: string;
+    }>,
+    accounts: Map<string, Account>,
+  ): LedgerPosting[] {
+    return legs.map((leg) => {
+      const acc = accounts.get(leg.finAddress)!;
+      const posting = new LedgerPosting();
+      posting.accountId = acc.accountId;
+      posting.amount = Number(leg.amount);
+      posting.side = leg.isCredit ? 'CREDIT' : 'DEBIT';
+      posting.memo = leg.memo ?? undefined;
+      return posting;
+    });
+  }
+
+  /**
+   * Validates that a string is a properly formatted monetary value.
+   * Accepts integers and decimals up to 6 places.
+   */
   private isValidMonetaryString(v: string): boolean {
     return /^\d+(\.\d{1,6})?$/.test(v) || v === '0';
   }
-
-  private compareAmounts(a: string, b: string): number {
-    return Number(a) - Number(b); // ← replace with decimal.js later
-  }
-
-  private addAmounts(a: string, b: string): string {
-    return (Number(a) + Number(b)).toFixed(2); // ← replace with decimal.js
-  }
 }
+// replace with decimal.js
 
 /////////////////////////
 // FILE: src/ledger/ledger.types.ts
@@ -1631,7 +1747,7 @@ export interface LedgerTransferInput {
   legs: Array<{
     finAddress: string; // identifies account
     amount: string; // positive number – direction determined by isCredit
-    isCredit: boolean; // true = money leaving this account (credit)
+    isCredit: boolean;
     memo?: string;
   }>;
 }
@@ -1701,15 +1817,11 @@ export class ReverseLedgerDto {
 /////////////////////////
 import {
   IsBoolean,
-  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
   Matches,
-  ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
-import { Currency } from 'src/common/enums/transaction.enums';
 
 export class TransferLegDto {
   @IsString()
@@ -1723,9 +1835,10 @@ export class TransferLegDto {
   amount: string;
 
   @IsBoolean({
-    message: 'isCredit must be true (DEBIT) or false (CREDIT)',
+    message:
+      'isCredit must be true (CREDIT, arriving) or false (DEBIT, leaving)',
   })
-  isCredit: boolean; // true = money leaving (DEBIT), false = money arriving (CREDIT)
+  isCredit: boolean;
 
   @IsString()
   @IsOptional()
@@ -1831,6 +1944,7 @@ export class LedgerPosting {
 import { Participant } from 'src/auth/entities/participant.entity';
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import { Role } from 'src/common/enums/auth.enums';
 
 // ================== seedParticipant ==================
 // Seeds a default participant (admin) into the database
@@ -1854,7 +1968,7 @@ export async function seedParticipant(dataSource: DataSource) {
       participantId: 'BANK_SL_001',
       username: 'admin',
       passwordHash,
-      roles: 'admin',
+      roles: [Role.ADMIN],
       isActive: true,
     }),
   );
@@ -1970,7 +2084,10 @@ import { KycService } from 'src/kyc/kyc.service';
 
 import { KycTier } from 'src/common/enums/kyc.enums';
 import { WITHDRAWAL_POOL_FIN_ADDRESS } from 'src/common/constants';
-import { CardTransaction } from 'src/common/enums/transaction.enums';
+import {
+  CardTransaction,
+  TransactionType,
+} from 'src/common/enums/transaction.enums';
 
 @Injectable()
 export class WithdrawService {
@@ -1999,28 +2116,31 @@ export class WithdrawService {
     return this.dataSource.transaction(async (manager) => {
       const txId = `WD-${Date.now()}`;
 
-      await this.ledgerService.postTransfer({
-        txId,
-        reference: 'Wallet withdrawal',
-        participantId,
-        postedBy: 'withdraw-service',
+      const transfer = await this.ledgerService.postTransfer(
+        {
+          txId,
+          reference: 'Wallet withdrawal',
+          participantId,
+          postedBy: 'withdraw-service',
 
-        legs: [
-          {
-            finAddress: wallet.finAddress,
-            amount: dto.amount,
-            isCredit: true,
-            memo: 'Withdrawal debit',
-          },
+          legs: [
+            {
+              finAddress: wallet.finAddress,
+              amount: dto.amount,
+              isCredit: false, // DEBIT — money LEAVING the wallet
+              memo: 'Withdrawal debit',
+            },
 
-          {
-            finAddress: WITHDRAWAL_POOL_FIN_ADDRESS,
-            amount: dto.amount,
-            isCredit: false,
-            memo: 'Withdrawal settlement',
-          },
-        ],
-      });
+            {
+              finAddress: WITHDRAWAL_POOL_FIN_ADDRESS,
+              amount: dto.amount,
+              isCredit: true, // CREDIT — money ARRIVING at settlement pool
+              memo: 'Withdrawal settlement',
+            },
+          ],
+        },
+        manager,
+      );
 
       const withdrawal = this.withdrawRepo.create({
         participantId,
@@ -2028,10 +2148,16 @@ export class WithdrawService {
         ccuuid: wallet.ccuuid,
         amount: dto.amount,
         destination: dto.destination,
+        type: TransactionType.WALLET_WITHDRAWAL,
         status: CardTransaction.INITIATED,
       });
 
-      return manager.save(withdrawal);
+      if (transfer.journalId) {
+        withdrawal.status = CardTransaction.COMPLETED;
+        return await manager.save(withdrawal);
+      } else {
+        throw new Error('Ledger transfer failed to return journalId');
+      }
     });
   }
 }
@@ -2058,6 +2184,7 @@ export class WithdrawDto {
 /////////////////////////
 // FILE: src/withdraw/entities/withdraw.entity.ts
 /////////////////////////
+import { TransactionType } from 'src/common/enums/transaction.enums';
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -2084,6 +2211,13 @@ export class Withdrawal {
 
   @Column()
   destination: string;
+
+  @Column({
+    type: 'enum',
+    enum: TransactionType,
+    default: TransactionType.WALLET_WITHDRAWAL, // Set a default
+  })
+  type: TransactionType;
 
   @Column()
   status: string;
@@ -2199,7 +2333,7 @@ export const databaseConfig: TypeOrmModuleOptions = {
   database: 'cas_db',
   autoLoadEntities: true,
   synchronize: true,
-  dropSchema: false,
+  dropSchema: true,
 };
 
 /////////////////////////
@@ -2543,7 +2677,15 @@ export class CreateFinAddressDto {
 /////////////////////////
 // FILE: src/auth/auth.controller.ts
 /////////////////////////
-import { Controller, Post, Delete, Body, Res, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Delete,
+  Body,
+  Res,
+  UseGuards,
+  Req,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -2576,6 +2718,19 @@ export class AuthController {
     // Set JWT token as HTTP-only cookie
     res.cookie(COOKIE_NAME, token, COOKIE_OPTS);
 
+    return { success: true };
+  }
+
+  // ================== refresh ==================
+  @Post('refresh')
+  @UseGuards(JwtAuthGuard) // Requires a currently valid token to refresh
+  async refresh(@Req() req: any, @Res({ passthrough: true }) res: any) {
+    // Generate a new token based on the existing user's data
+    const newToken = await this.authService.login({
+      username: req.user.username,
+    } as any);
+
+    res.cookie(COOKIE_NAME, newToken, COOKIE_OPTS);
     return { success: true };
   }
 
@@ -2796,6 +2951,7 @@ export class LoginDto {
 /////////////////////////
 // FILE: src/auth/entities/participant.entity.ts
 /////////////////////////
+import { Role } from 'src/common/enums/auth.enums';
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -2819,8 +2975,8 @@ export class Participant {
   @Column()
   passwordHash: string;
 
-  @Column({ default: 'participant' })
-  roles: string;
+  @Column({ type: 'simple-array', default: Role.CUSTOMER })
+  roles: string[];
 
   @Column({ default: true })
   isActive: boolean;
@@ -3421,13 +3577,13 @@ export class WalletService {
           {
             finAddress: this.SYSTEM_POOL_FIN,
             amount: amountStr,
-            isCredit: true, // debit system
+            isCredit: false, // debit system
             memo: `Funded ${wallet.finAddress}`,
           },
           {
             finAddress: wallet.finAddress,
             amount: amountStr,
-            isCredit: false, // credit wallet
+            isCredit: true, // credit wallet
             memo: 'Funding from system pool',
           },
         ],
@@ -3507,13 +3663,13 @@ export class WalletService {
           {
             finAddress: wallet.finAddress,
             amount: amountStr,
-            isCredit: true, // debit wallet
+            isCredit: false, // debit wallet
             memo: `Withdrawal to system`,
           },
           {
             finAddress: this.SYSTEM_POOL_FIN,
             amount: amountStr,
-            isCredit: false, // credit system
+            isCredit: true, // credit system
             memo: `Withdrawal from ${wallet.finAddress}`,
           },
         ],
@@ -3625,13 +3781,13 @@ export class WalletService {
           {
             finAddress: sender.finAddress,
             amount: amountStr,
-            isCredit: true,
+            isCredit: false,
             memo: `Sent to ${receiver.ccuuid}`,
           },
           {
             finAddress: receiver.finAddress,
             amount: amountStr,
-            isCredit: false,
+            isCredit: true,
             memo: `Received from ${sender.ccuuid}`,
           },
         ],
@@ -4025,6 +4181,7 @@ import { CronExpression } from '@nestjs/schedule';
 import { Cron } from '@nestjs/schedule';
 import { SmsService } from 'src/common/sms/sms.service';
 import { EmailService } from 'src/common/email/email.service';
+import * as crypto from 'crypto'; 
 
 @Injectable()
 export class OtpService {
@@ -4059,7 +4216,7 @@ export class OtpService {
     await this.otpRepo.delete({ participantId, ccuuid });
 
     // Generate 6 digit OTP
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpCode = crypto.randomInt(100000, 999999).toString();
 
     // Create OTP entity with 5 minute expiry
     const otp = this.otpRepo.create({
@@ -4540,7 +4697,10 @@ import { CardService } from 'src/card/card.service';
 import { KycService } from 'src/kyc/kyc.service';
 import { LoadWalletDto } from './dto/load-wallet-dto';
 import { KycTier } from 'src/common/enums/kyc.enums';
-import { CardTransaction } from 'src/common/enums/transaction.enums';
+import {
+  CardTransaction,
+  TransactionType,
+} from 'src/common/enums/transaction.enums';
 import { WalletStatus } from 'src/common/enums/banking.enums';
 import { CARD_GATEWAY_POOL_FIN_ADDRESS, TX_PREFIX } from 'src/common/constants';
 
@@ -4602,6 +4762,7 @@ export class LoadService {
         ccuuid: wallet.ccuuid,
         walletId: wallet.walletId,
         amount: dto.amount,
+        type: TransactionType.CARD_LOAD,
         status: CardTransaction.INITIATED,
       }),
     );
@@ -4623,6 +4784,7 @@ export class LoadService {
       // 6. Update Internal Ledger (Atomic Transaction)
       return await this.dataSource.transaction(async (manager) => {
         const txId = `${TX_PREFIX.LOAD}-${loadTx.id}`;
+
         const transferResult = await this.ledgerService.postTransfer(
           {
             txId,
@@ -4634,13 +4796,13 @@ export class LoadService {
               {
                 finAddress: CARD_GATEWAY_POOL_FIN_ADDRESS, // System Liability Account
                 amount: dto.amount,
-                isCredit: true,
-                memo: 'Gateway collection',
+                isCredit: false, // DEBIT — money LEAVING the gateway pool
+                memo: 'Gateway disbursement to wallet',
               },
               {
                 finAddress: wallet.finAddress, // User Wallet Account
                 amount: dto.amount,
-                isCredit: false,
+                isCredit: true, // CREDIT — money ARRIVING at user wallet
                 memo: 'Wallet load success',
               },
             ],
@@ -4651,11 +4813,10 @@ export class LoadService {
         if (!transferResult?.journalId) {
           loadTx.status = CardTransaction.FAILED;
           throw new Error('Ledger transfer failed');
-        } else {
-          // 7. Finalize Status
-          loadTx.status = CardTransaction.COMPLETED;
-          loadTx.gatewayRef = gatewayResult.reference;
         }
+
+        loadTx.status = CardTransaction.COMPLETED;
+        loadTx.gatewayRef = gatewayResult.reference;
         return await manager.save(loadTx);
       });
     } catch (error) {
@@ -4669,7 +4830,7 @@ export class LoadService {
   private async chargeGateway(token: string, amount: string, key: string) {
     // Simulate API call to Stripe/Paystack/Flutterwave
     await new Promise((r) => setTimeout(r, 100));
-    return { success: true, reference: `GTW-${Date.now}` };
+    return { success: true, reference: `GTW-${Date.now()}` };
   }
 }
 
@@ -4714,7 +4875,10 @@ export class LoadWalletDto {
 /////////////////////////
 // FILE: src/load/entities/load-wallet.entity.ts
 /////////////////////////
-import { CardTransaction } from 'src/common/enums/transaction.enums';
+import {
+  CardTransaction,
+  TransactionType,
+} from 'src/common/enums/transaction.enums';
 import {
   Column,
   CreateDateColumn,
@@ -4750,6 +4914,13 @@ export class LoadTransaction {
     default: CardTransaction.INITIATED,
   })
   status: CardTransaction;
+
+  @Column({
+    type: 'enum',
+    enum: TransactionType,
+    default: TransactionType.CARD_LOAD,
+  })
+  type: TransactionType;
 
   @Column({ nullable: true })
   gatewayRef: string;
@@ -5464,7 +5635,7 @@ export class FundingModule {}
 // src/payments/funding/funding.service.ts
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { FundingWallet } from './entities/funding.entity';
 import { Wallet } from 'src/wallet/entities/wallet.entity';
 import { FundingWalletDto } from './dto/fund-wallet.dto';
@@ -5473,26 +5644,18 @@ import { LedgerService } from 'src/ledger/ledger.service';
 
 @Injectable()
 export class FundingService {
-  // System internal pool account used for funding
   private readonly SYSTEM_POOL_FIN = 'SYSTEM_INTERNAL';
 
   constructor(
-    // Inject Funding repository
     @InjectRepository(FundingWallet)
     private fundingRepo: Repository<FundingWallet>,
-
-    // Inject Wallet repository
     @InjectRepository(Wallet)
     private walletRepo: Repository<Wallet>,
-
-    // Inject Accounts service for ledger transfers
     private readonly ledgerService: LedgerService,
+    private readonly dataSource: DataSource, // 1. Inject DataSource
   ) {}
 
-  // ================== fundingWallet ==================
-  // Funds a wallet from the system pool
   async fundingWallet(participantId: string, dto: FundingWalletDto) {
-    // Find wallet belonging to participant
     const wallet = await this.walletRepo.findOne({
       where: { walletId: dto.walletId, participantId },
     });
@@ -5500,41 +5663,51 @@ export class FundingService {
     if (!wallet)
       throw new NotFoundException('Wallet does not exist or access denied');
 
-    // Create funding record
-    const funding = await this.fundingRepo.save(
-      this.fundingRepo.create({
-        ...dto,
-        participantId,
-        status: TransactionStatus.INITIATED,
-      }),
-    );
+    // 2. Start Transaction
+    return await this.dataSource.transaction(async (manager) => {
+      // Create initial record within transaction
+      const funding = await manager.save(
+        manager.create(FundingWallet, {
+          ...dto,
+          participantId,
+          status: TransactionStatus.INITIATED,
+        }),
+      );
 
-    // Move funds in ledger (System → Wallet)
-    await this.ledgerService.postTransfer({
-      txId: `FUND-${funding.fundingId}`,
-      reference: `Wallet funding for ${dto.walletId}`,
-      participantId,
-      postedBy: 'system',
-      legs: [
+      // 3. Move funds (Pass the manager!)
+      const transfer = await this.ledgerService.postTransfer(
         {
-          finAddress: this.SYSTEM_POOL_FIN,
-          amount: String(dto.amount),
-          isCredit: true, // DEBIT — money leaving system pool
-          memo: `Funding wallet ${dto.walletId}`,
+          txId: `FUND-${funding.fundingId}`,
+          reference: `Wallet funding for ${dto.walletId}`,
+          participantId,
+          postedBy: 'system',
+          legs: [
+            {
+              finAddress: this.SYSTEM_POOL_FIN,
+              amount: String(dto.amount),
+              isCredit: false,
+              memo: `Funding wallet ${dto.walletId}`,
+            },
+            {
+              finAddress: wallet.finAddress,
+              amount: String(dto.amount),
+              isCredit: true,
+              memo: `Funded from system pool`,
+            },
+          ],
         },
-        {
-          finAddress: wallet.finAddress,
-          amount: String(dto.amount),
-          isCredit: false, // CREDIT — money arriving at wallet
-          memo: `Funded from system pool`,
-        },
-      ],
+        manager,
+      );
+
+      // 4. Update status and save
+      funding.status = TransactionStatus.COMPLETED;
+      await manager.save(funding);
+
+      return {
+        fundingId: funding.fundingId,
+        status: funding.status,
+      };
     });
-
-    return {
-      fundingId: funding.fundingId,
-      status: TransactionStatus.COMPLETED,
-    };
   }
 }
 
@@ -5806,13 +5979,13 @@ export class BulkService {
               {
                 finAddress: tx.senderFinAddress,
                 amount: String(tx.amount),
-                isCredit: true, // DEBIT leg — money leaving sender
+                isCredit: false, // DEBIT leg — money leaving sender
                 memo: `Bulk payment to ${tx.receiverAlias}`,
               },
               {
                 finAddress: tx.receiverFinAddress,
                 amount: String(tx.amount),
-                isCredit: false, // CREDIT leg — money arriving at receiver
+                isCredit: true, // CREDIT leg — money arriving at receiver
                 memo: `Bulk payment from ${tx.senderAlias}`,
               },
             ],
@@ -6162,13 +6335,13 @@ export class QrService {
           {
             finAddress: savedTx.senderFinAddress,
             amount: String(savedTx.amount),
-            isCredit: true, // DEBIT — money leaving sender
+            isCredit: false, // DEBIT — money leaving sender
             memo: `QR payment to ${savedTx.receiverAlias}`,
           },
           {
             finAddress: savedTx.receiverFinAddress,
             amount: String(savedTx.amount),
-            isCredit: false, // CREDIT — money arriving at merchant
+            isCredit: true, // CREDIT — money arriving at merchant
             memo: `QR payment from ${savedTx.senderAlias}`,
           },
         ],
@@ -6539,13 +6712,13 @@ export class CreditTransferService {
           {
             finAddress: savedTx.senderFinAddress,
             amount: String(savedTx.amount),
-            isCredit: true, // DEBIT — money leaving sender
+            isCredit: false, // DEBIT — money leaving sender
             memo: `Credit transfer to ${savedTx.receiverAlias}`,
           },
           {
             finAddress: savedTx.receiverFinAddress,
             amount: String(savedTx.amount),
-            isCredit: false, // CREDIT — money arriving at receiver
+            isCredit: true, // CREDIT — money arriving at receiver
             memo: `Credit transfer from ${savedTx.senderAlias}`,
           },
         ],
@@ -6873,13 +7046,13 @@ export class RtpService {
           {
             finAddress: savedTx.senderFinAddress,
             amount: String(savedTx.amount),
-            isCredit: true, // DEBIT — money leaving payer
+            isCredit: false, // DEBIT — money leaving payer
             memo: `RTP payment to ${savedTx.receiverAlias}`,
           },
           {
             finAddress: savedTx.receiverFinAddress,
             amount: String(savedTx.amount),
-            isCredit: false, // CREDIT — money arriving at requester
+            isCredit: true, // CREDIT — money arriving at requester
             memo: `RTP payment from ${savedTx.senderAlias}`,
           },
         ],
@@ -7441,7 +7614,7 @@ export enum WalletStatus {
 
 export enum WalletLimit {
   TEN = '10000',
-  TEWNTY = '20000',
+  TWENTY = '20000',
   FIFTY = '50000',
 }
 
@@ -7559,7 +7732,7 @@ export enum RtpStatus {
 export enum TransactionStatus {
   INITIATED = 'INITIATED',
   PROCESSING = 'PROCESSING',
-  COMPLETED = 'COMPLETED', // Use COMPLETED or SUCCESS consistently
+  COMPLETED = 'COMPLETED',
   FAILED = 'FAILED',
 }
 
@@ -7568,6 +7741,9 @@ export enum TransactionType {
   QR_PAYMENT = 'QR_PAYMENT',
   RTP_PAYMENT = 'RTP_PAYMENT',
   BULK_PAYMENT = 'BULK_PAYMENT',
+  WALLET_FUNDING = 'WALLET_FUNDING',
+  WALLET_WITHDRAWAL = 'WALLET_WITHDRAWAL',
+  CARD_LOAD = 'CARD_LOAD',
 }
 
 export enum Currency {
@@ -7611,7 +7787,6 @@ export class ParticipantGuard implements CanActivate {
   ) {}
 
   // ================== canActivate ==================
-  // Validates participant-id header before allowing request
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<Request>();
     const bankId = req.headers['participant-id'] as string;
@@ -7638,15 +7813,15 @@ export class ParticipantGuard implements CanActivate {
     const request = req as any;
     request.participantId = bank.participantId;
     request.bankId = bank.participantId;
-    request.name = bank.username; // Using username as name
-    request.roles = rolesArray;
+    // request.name = bank.username; // Using username as name
+    // request.roles = rolesArray;
 
-    // 2. Attach to req.user for NestJS standard usage
-    req.user = {
-      id: bank.participantId,
-      name: bank.username,
-      roles: rolesArray,
-    };
+    // // 2. Attach to req.user for NestJS standard usage
+    // req.user = {
+    //   id: bank.participantId,
+    //   name: bank.username,
+    //   roles: rolesArray,
+    // };
 
     return true;
   }

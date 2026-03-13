@@ -23,5 +23,5 @@ export class VerifyPinDto {
   @IsString()
   @Length(6, 6)
   @Matches(/^\d{6}$/)
-  newPin: string;
+  pin: string;
 }

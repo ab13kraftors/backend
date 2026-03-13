@@ -7,7 +7,7 @@ export interface LedgerTransferInput {
   legs: Array<{
     finAddress: string; // identifies account
     amount: string; // positive number – direction determined by isCredit
-    isCredit: boolean; // true = money leaving this account (credit)
+    isCredit: boolean;
     memo?: string;
   }>;
 }

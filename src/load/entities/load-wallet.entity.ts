@@ -1,4 +1,7 @@
-import { CardTransaction } from 'src/common/enums/transaction.enums';
+import {
+  CardTransaction,
+  TransactionType,
+} from 'src/common/enums/transaction.enums';
 import {
   Column,
   CreateDateColumn,
@@ -34,6 +37,13 @@ export class LoadTransaction {
     default: CardTransaction.INITIATED,
   })
   status: CardTransaction;
+
+  @Column({
+    type: 'enum',
+    enum: TransactionType,
+    default: TransactionType.CARD_LOAD,
+  })
+  type: TransactionType;
 
   @Column({ nullable: true })
   gatewayRef: string;

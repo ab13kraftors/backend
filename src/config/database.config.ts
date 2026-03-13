@@ -20,5 +20,5 @@ export const databaseConfig: TypeOrmModuleOptions = {
   database: 'cas_db',
   autoLoadEntities: true,
   synchronize: true,
-  dropSchema: false,
+  dropSchema: true,
 };

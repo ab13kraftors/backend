@@ -1,14 +1,10 @@
 import {
   IsBoolean,
-  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
   Matches,
-  ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
-import { Currency } from 'src/common/enums/transaction.enums';
 
 export class TransferLegDto {
   @IsString()
@@ -22,9 +18,10 @@ export class TransferLegDto {
   amount: string;
 
   @IsBoolean({
-    message: 'isCredit must be true (DEBIT) or false (CREDIT)',
+    message:
+      'isCredit must be true (CREDIT, arriving) or false (DEBIT, leaving)',
   })
-  isCredit: boolean; // true = money leaving (DEBIT), false = money arriving (CREDIT)
+  isCredit: boolean;
 
   @IsString()
   @IsOptional()

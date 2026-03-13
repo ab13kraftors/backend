@@ -1,3 +1,4 @@
+import { TransactionType } from 'src/common/enums/transaction.enums';
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -24,6 +25,13 @@ export class Withdrawal {
 
   @Column()
   destination: string;
+
+  @Column({
+    type: 'enum',
+    enum: TransactionType,
+    default: TransactionType.WALLET_WITHDRAWAL, // Set a default
+  })
+  type: TransactionType;
 
   @Column()
   status: string;

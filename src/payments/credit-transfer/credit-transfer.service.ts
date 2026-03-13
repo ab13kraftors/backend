@@ -69,13 +69,13 @@ export class CreditTransferService {
           {
             finAddress: savedTx.senderFinAddress,
             amount: String(savedTx.amount),
-            isCredit: true, // DEBIT — money leaving sender
+            isCredit: false, // DEBIT — money leaving sender
             memo: `Credit transfer to ${savedTx.receiverAlias}`,
           },
           {
             finAddress: savedTx.receiverFinAddress,
             amount: String(savedTx.amount),
-            isCredit: false, // CREDIT — money arriving at receiver
+            isCredit: true, // CREDIT — money arriving at receiver
             memo: `Credit transfer from ${savedTx.senderAlias}`,
           },
         ],

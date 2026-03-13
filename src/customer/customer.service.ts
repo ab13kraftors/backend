@@ -82,7 +82,7 @@ export class CustomerService {
     });
 
     if (!existing) {
-      throw new ConflictException('Customer not found');
+      throw new NotFoundException('Customer not found');
     }
 
     const effectiveType = dto.type ?? existing.type;
@@ -201,12 +201,12 @@ export class CustomerService {
 
       const savedCustomer = await manager.save(customer);
 
-      // Check if alias already exists
+      // Check if alias already exists -- To check for globally
       const existingAlias = await manager.findOne(Alias, {
         where: {
           participantId,
           value: dto.alias.value,
-          customer: savedCustomer,
+          // customer: savedCustomer,
         },
       });
 
@@ -271,7 +271,10 @@ export class CustomerService {
       );
     }
 
-    const saltRounds = Number(process.env.PIN_SALT_ROUNDS ?? 12);
+    const saltRounds = Number(process.env.PIN_SALT_ROUNDS);
+    if (!Number.isInteger(saltRounds) || saltRounds <= 0) {
+      throw new Error('Invalid PIN_SALT_ROUNDS');
+    }
 
     // Hash and store PIN
     customer.pinHash = await bcrypt.hash(dto.pin, saltRounds);

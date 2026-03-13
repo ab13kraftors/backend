@@ -6,6 +6,6 @@ export enum WalletStatus {
 
 export enum WalletLimit {
   TEN = '10000',
-  TEWNTY = '20000',
+  TWENTY = '20000',
   FIFTY = '50000',
 }

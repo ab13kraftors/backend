@@ -4,6 +4,7 @@ import {
   IsBoolean,
   IsDateString,
   ValidateIf,
+  IsEmail,
 } from 'class-validator';
 import {
   CustomerType,
@@ -71,9 +72,11 @@ export class UpdateCustomerDto {
   dob?: string;
 
   @IsOptional()
+  @IsEmail()
   firstEmail?: string;
 
   @IsOptional()
+  @IsEmail()
   secondEmail?: string;
 
   // COMPANY
