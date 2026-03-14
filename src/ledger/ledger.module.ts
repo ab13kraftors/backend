@@ -4,11 +4,12 @@ import { LedgerJournal } from './entities/ledger-journal.entity';
 import { LedgerPosting } from './entities/ledger-posting.entity';
 import { LedgerService } from './ledger.service';
 import { AccountsModule } from 'src/accounts/accounts.module';
+import { Account } from 'src/accounts/entities/account.entity';
 // import { LedgerController } from './ledger.controller';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([LedgerJournal, LedgerPosting]),
+    TypeOrmModule.forFeature([LedgerJournal, LedgerPosting, Account]),
     forwardRef(() => AccountsModule),
   ],
   providers: [LedgerService],

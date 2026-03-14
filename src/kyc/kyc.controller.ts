@@ -16,7 +16,7 @@ import { RejectKycDto } from './dto/review-kyc.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { memoryStorage } from 'multer';
 import { Participant } from 'src/common/decorators/participant/participant.decorator';
-import { RolesGuard } from 'src/common/guards/auth/roles.gaurd';
+import { RolesGuard } from 'src/common/guards/auth/roles.guard';
 import { Roles } from 'src/common/decorators/auth/roles.decorator';
 import { Role } from 'src/common/enums/auth.enums';
 

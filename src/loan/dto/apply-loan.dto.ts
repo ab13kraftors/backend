@@ -1,4 +1,9 @@
-import { IsNumberString, IsOptional, IsString } from 'class-validator';
+import {
+  IsNumberString,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 export class ApplyLoanDto {
   @IsNumberString()
@@ -6,5 +11,6 @@ export class ApplyLoanDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(500)
   purpose?: string;
 }

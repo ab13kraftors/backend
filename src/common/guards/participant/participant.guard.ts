@@ -37,12 +37,13 @@ export class ParticipantGuard implements CanActivate {
     // Attach participantId to request for downstream usage
     // (req as any).participantId = bankId;
 
-    const rolesArray = [bank.roles];
+    const rolesArray = Array.isArray(bank.roles) ? bank.roles : [bank.roles];
 
     // 1. Attach to request root (as requested)
-    const request = req as any;
-    request.participantId = bank.participantId;
-    request.bankId = bank.participantId;
+    // const request = req as any;
+    (req as any).participantId = bank.participantId;
+    (req as any).bankId = bank.participantId;
+    (req as any).roles = rolesArray;
     // request.name = bank.username; // Using username as name
     // request.roles = rolesArray;
 

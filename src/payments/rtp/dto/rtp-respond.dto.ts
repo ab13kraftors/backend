@@ -3,7 +3,7 @@ import { IsNotEmpty, IsString, IsUUID } from 'class-validator';
 export class RespondRtpDto {
   @IsUUID()
   @IsNotEmpty()
-  rtpId: string;
+  rtpMsgId: string;
 
   @IsString()
   @IsNotEmpty()

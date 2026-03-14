@@ -1,4 +1,11 @@
-import { IsArray, IsEnum, IsNotEmpty, IsOptional, IsString, Matches, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { Currency } from 'src/common/enums/transaction.enums';
 import { TransferLegDto } from './ledger-transfer.dto';

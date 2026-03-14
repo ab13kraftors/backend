@@ -23,8 +23,13 @@ export class RtpController {
   accept(
     @Param('rtpMsgId') id: string,
     @Body('debtorAccount') account: string,
+    @Body('pin') pin: string,
   ) {
-    return this.rtpService.approve(id, account);
+    return this.rtpService.approve({
+      rtpMsgId: id,
+      debtorAccount: account,
+      pin,
+    });
   }
 
   // ================== reject ==================

@@ -25,7 +25,15 @@ export class RTP {
   @Column()
   payerAlias: string;
 
-  @Column({ type: 'decimal', precision: 18, scale: 2 })
+  @Column({
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    transformer: {
+      to: (value: number) => value,
+      from: (value: string) => parseFloat(value),
+    },
+  })
   amount: number;
 
   @Column({ type: 'enum', enum: Currency, default: Currency.SLE })

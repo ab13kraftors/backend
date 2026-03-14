@@ -1721,7 +1721,7 @@ export class LedgerService {
       const acc = accounts.get(leg.finAddress)!;
       const posting = new LedgerPosting();
       posting.accountId = acc.accountId;
-      posting.amount = leg.amount;
+      posting.amount = Number(leg.amount);
       posting.side = leg.isCredit ? 'CREDIT' : 'DEBIT';
       posting.memo = leg.memo ?? undefined;
       return posting;
@@ -7733,13 +7733,8 @@ export class RtpController {
   accept(
     @Param('rtpMsgId') id: string,
     @Body('debtorAccount') account: string,
-    @Body('pin') pin: string,
   ) {
-    return this.rtpService.approve({
-      rtpMsgId: id,
-      debtorAccount: account,
-      pin,
-    });
+    return this.rtpService.approve(id, account);
   }
 
   // ================== reject ==================
@@ -7844,7 +7839,7 @@ export class RtpService {
   // ================== approve ==================
   // Approves RTP request and performs payment
   async approve(dto: RespondRtpDto) {
-    const { rtpMsgId, debtorAccount, pin } = dto;
+    const { rtpMsgId, debtorAccount } = dto;
     const rtp = await this.rtpRepo.findOne({ where: { rtpMsgId } });
 
     if (!rtp) throw new NotFoundException('RTP not found');

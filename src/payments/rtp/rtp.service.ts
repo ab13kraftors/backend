@@ -11,10 +11,13 @@ import { Transaction } from '../entities/transaction.entity';
 import { CasService } from 'src/cas/cas.service';
 import { RtpStatus } from 'src/common/enums/rtp.enums';
 import {
+  Currency,
   TransactionStatus,
   TransactionType,
 } from 'src/common/enums/transaction.enums';
 import { LedgerService } from 'src/ledger/ledger.service';
+import { RtpInitiateDto } from './dto/rtp-initiate.dto';
+import { RespondRtpDto } from './dto/rtp-respond.dto';
 
 @Injectable()
 export class RtpService {
@@ -37,12 +40,13 @@ export class RtpService {
 
   // ================== initiate ==================
   // Creates a new Request-To-Pay record
-  async initiate(participantId: string, dto: any) {
+  async initiate(participantId: string, dto: RtpInitiateDto) {
     // Determine expiry time from environment variable
     const expiryMs = Number(process.env.RTP_EXPIRY_MINUTES ?? 60) * 60 * 1000;
 
     const rtp = this.rtpRepo.create({
       ...dto,
+      currency: dto.currency ?? Currency.SLE,
       participantId,
       requesterAliasType: dto.requesterAliasType,
       status: RtpStatus.PENDING,
@@ -54,7 +58,8 @@ export class RtpService {
 
   // ================== approve ==================
   // Approves RTP request and performs payment
-  async approve(rtpMsgId: string, debtorAccount: string) {
+  async approve(dto: RespondRtpDto) {
+    const { rtpMsgId, debtorAccount, pin } = dto;
     const rtp = await this.rtpRepo.findOne({ where: { rtpMsgId } });
 
     if (!rtp) throw new NotFoundException('RTP not found');
@@ -68,7 +73,7 @@ export class RtpService {
 
     // Check expiry
     if (new Date() > rtp.expiresAt) {
-      await this.rtpRepo.update(rtpMsgId, { status: RtpStatus.EXPIRED });
+      await this.updateStatus(rtpMsgId, RtpStatus.EXPIRED);
       throw new BadRequestException('RTP request has expired');
     }
 
@@ -121,10 +126,11 @@ export class RtpService {
       savedTx.status = TransactionStatus.COMPLETED;
 
       // Update RTP status
-      await this.rtpRepo.update(rtpMsgId, {
-        status: RtpStatus.ACCEPTED,
-        message: 'Payment completed successfully',
-      });
+      await this.updateStatus(
+        rtpMsgId,
+        RtpStatus.ACCEPTED,
+        'Payment completed successfully',
+      );
 
       return await this.txRepo.save(savedTx);
     } catch (error) {
@@ -133,9 +139,12 @@ export class RtpService {
       await this.txRepo.save(savedTx);
 
       // Update RTP with failure message
-      await this.rtpRepo.update(rtpMsgId, {
-        message: `Payment failed: ${error}`,
-      });
+      await this.rtpRepo.update(
+        { rtpMsgId },
+        {
+          message: `Payment failed: ${error}`,
+        },
+      );
 
       throw error;
     }
@@ -155,10 +164,13 @@ export class RtpService {
 
     this.logger.log(`RTP rejected by payer`, { rtpMsgId });
 
-    return this.rtpRepo.update(rtpMsgId, {
-      status: RtpStatus.REJECTED,
-      message: 'Reject by the payer',
-    });
+    const result = await this.updateStatus(
+      rtpMsgId,
+      RtpStatus.REJECTED,
+      'Reject by the payer',
+    );
+
+    return result;
   }
 
   // ================== findPendingByPayer ==================
@@ -171,5 +183,13 @@ export class RtpService {
       },
       order: { createdAt: 'DESC' },
     });
+  }
+
+  private async updateStatus(
+    rtpMsgId: string,
+    status: RtpStatus,
+    message?: string,
+  ) {
+    return this.rtpRepo.update({ rtpMsgId }, { status, message });
   }
 }

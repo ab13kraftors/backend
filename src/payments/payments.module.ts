@@ -16,6 +16,7 @@ import { TransactionModule } from './transaction/transaction.module';
 import { VerifyModule } from './verify/verify.module';
 import { FundingModule } from './funding/funding.module';
 import { LedgerModule } from 'src/ledger/ledger.module';
+import { CreditTransferModule } from './credit-transfer/credit-transfer.module';
 
 @Module({
   imports: [
@@ -29,9 +30,10 @@ import { LedgerModule } from 'src/ledger/ledger.module';
     VerifyModule,
     FundingModule,
     LedgerModule,
+    CreditTransferModule,
   ],
-  controllers: [CreditTransferController],
-  providers: [PaymentsService, CreditTransferService],
+  controllers: [],
+  providers: [PaymentsService],
   exports: [PaymentsService, TypeOrmModule],
 })
 export class PaymentsModule {}

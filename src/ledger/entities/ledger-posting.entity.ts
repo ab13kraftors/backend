@@ -25,7 +25,7 @@ export class LedgerPosting {
   accountId: string;
 
   @Column({ type: 'numeric', precision: 18, scale: 6 }) // better than string for sums
-  amount: number; // ← change to number if you trust pg numeric, or keep string
+  amount: string;
 
   @Column({ type: 'enum', enum: ['DEBIT', 'CREDIT'] })
   side: 'DEBIT' | 'CREDIT';

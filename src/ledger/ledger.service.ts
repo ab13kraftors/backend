@@ -436,7 +436,7 @@ export class LedgerService {
       const acc = accounts.get(leg.finAddress)!;
       const posting = new LedgerPosting();
       posting.accountId = acc.accountId;
-      posting.amount = Number(leg.amount);
+      posting.amount = leg.amount;
       posting.side = leg.isCredit ? 'CREDIT' : 'DEBIT';
       posting.memo = leg.memo ?? undefined;
       return posting;

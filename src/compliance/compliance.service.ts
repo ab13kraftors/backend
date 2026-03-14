@@ -20,11 +20,9 @@ export class ComplianceService {
       userId,
       participantId,
       metadata,
+      reported: metadata?.amount > 500000, // set before save
     });
-    await this.logRepo.save(log);
-    // BSL: Auto-flag for SAR if suspicious (e.g., high txn)
-    if (metadata?.amount > 500000) log.reported = true; // SLE threshold
-    return log;
+    return await this.logRepo.save(log);
   }
 
   // Cron for EOD reports (use ScheduleModule)

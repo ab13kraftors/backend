@@ -22,6 +22,7 @@ export class RtpInitiateDto {
   payerAlias: string;
 
   @IsEnum(AliasType)
+  @IsOptional()
   payerAliasType: AliasType = AliasType.MSISDN;
 
   @IsNumber()
@@ -29,6 +30,7 @@ export class RtpInitiateDto {
   amount: number;
 
   @IsEnum(Currency)
+  @IsOptional()
   currency: Currency = Currency.SLE;
 
   @IsOptional()

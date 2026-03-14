@@ -26,7 +26,7 @@ import { ComplianceModule } from './compliance/compliance.module';
 import { CardModule } from './card/card.module';
 import { LoadModule } from './load/load.module';
 import { WithdrawModule } from './withdraw/withdraw.module';
-import { RolesGuard } from './common/guards/auth/roles.gaurd';
+import { RolesGuard } from './common/guards/auth/roles.guard';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { LoanModule } from './loan/loan.module';
 

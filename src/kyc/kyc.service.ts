@@ -156,8 +156,8 @@ export class KycService {
     record.tier = KycTier.HARD_APPROVED;
     record.reviewedBy = adminId;
     record.reviewedAt = new Date();
-    record.rejectionReason = undefined;
-    record.rejectionNote = undefined;
+    record.rejectionReason = null;
+    record.rejectionNote = null;
 
     await this.kycRepo.save(record);
     return { kycId, tier: record.tier, message: 'Hard KYC approved' };

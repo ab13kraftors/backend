@@ -54,6 +54,22 @@ export class WalletService {
     Decimal.set({ precision: 18, rounding: Decimal.ROUND_HALF_UP });
   }
 
+  async findByCustomer(ccuuid: string): Promise<Wallet> {
+    const wallet = await this.wallRepo.findOne({ where: { ccuuid } });
+
+    if (!wallet) {
+      throw new NotFoundException(`Wallet for customer ${ccuuid} not found`);
+    }
+
+    if (wallet.status !== WalletStatus.ACTIVE) {
+      throw new BadRequestException(
+        `Wallet is ${wallet.status.toLowerCase()}. Only ACTIVE wallets can be used.`,
+      );
+    }
+
+    return wallet;
+  }
+
   async createWallet(
     ccuuid: string,
     participantId: string,

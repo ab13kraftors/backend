@@ -20,7 +20,7 @@ export class LoadWalletDto {
   amount: string;
 
   @IsString()
-  @Length(4, 4) // Assuming a 4-digit transaction PIN
+  @Length(6, 6) // Assuming a 4-digit transaction PIN
   @IsNotEmpty()
   pin: string;
 

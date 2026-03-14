@@ -1,23 +1,24 @@
 import { Module } from '@nestjs/common';
-import { LoanController } from './loan.controller';
-import { LoanService } from './loan.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { LoanApplication } from './entities/loan-application.entity';
 import { LoanRepayment } from './entities/loan-repayment.entity';
-import { WalletModule } from 'src/wallet/wallet.module';
-import { LedgerModule } from 'src/ledger/ledger.module';
-import { AccountsModule } from 'src/accounts/accounts.module';
-import { KycModule } from 'src/kyc/kyc.module';
+import { LoanService } from './loan.service';
+import { LoanController } from './loan.controller';
+import { LoanAdminController } from './loan-admin.controller';
+
+import { WalletModule } from '../wallet/wallet.module';
+import { LedgerModule } from '../ledger/ledger.module';
+import { KycModule } from '../kyc/kyc.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([LoanApplication, LoanRepayment]),
     WalletModule,
     LedgerModule,
-    AccountsModule,
     KycModule,
   ],
   providers: [LoanService],
   controllers: [LoanController, LoanAdminController],
+  exports: [LoanService],
 })
 export class LoanModule {}
