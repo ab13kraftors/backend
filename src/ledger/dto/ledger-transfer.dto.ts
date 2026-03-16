@@ -1,29 +1,58 @@
 import {
+  IsArray,
   IsBoolean,
+  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
-  Matches,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import { Currency } from 'src/common/enums/transaction.enums';
 
-export class TransferLegDto {
+export class LedgerTransferLegDto {
   @IsString()
   @IsNotEmpty()
   finAddress: string;
 
   @IsString()
-  @Matches(/^\d+(\.\d{1,2})?$/, {
-    message: 'amount must be a positive number with up to 2 decimal places',
-  })
+  @IsNotEmpty()
   amount: string;
 
-  @IsBoolean({
-    message:
-      'isCredit must be true (CREDIT, arriving) or false (DEBIT, leaving)',
-  })
+  @IsBoolean()
   isCredit: boolean;
 
-  @IsString()
   @IsOptional()
+  @IsString()
   memo?: string;
+}
+
+export class LedgerTransferDto {
+  @IsString()
+  @IsNotEmpty()
+  txId: string;
+
+  @IsOptional()
+  @IsString()
+  reference?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  participantId: string;
+
+  @IsOptional()
+  @IsString()
+  postedBy?: string;
+
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
+
+  @IsEnum(Currency)
+  currency: Currency;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => LedgerTransferLegDto)
+  legs: LedgerTransferLegDto[];
 }

@@ -1,10 +1,10 @@
 import {
-  IsString,
-  IsNotEmpty,
-  IsNumber,
-  IsOptional,
-  IsPositive,
   IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
 } from 'class-validator';
 import { AliasType } from 'src/common/enums/alias.enums';
 import { Currency } from 'src/common/enums/transaction.enums';
@@ -18,9 +18,9 @@ export class QrGenerateDto {
   aliasValue: string;
 
   @IsOptional()
-  @IsNumber()
-  @IsPositive()
-  amount?: number;
+  @IsString()
+  @Matches(/^\d+(\.\d{1,2})?$/)
+  amount?: string;
 
   @IsOptional()
   @IsEnum(Currency)
@@ -28,9 +28,11 @@ export class QrGenerateDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(120)
   merchantName?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(140)
   reference?: string;
 }

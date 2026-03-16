@@ -1,36 +1,72 @@
 import {
-  IsString,
-  IsNotEmpty,
-  IsNumber,
-  IsOptional,
-  IsPositive,
   IsEnum,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Length,
+  Matches,
+  MaxLength,
 } from 'class-validator';
-import { AliasType } from 'src/common/enums/alias.enums';
 import { Currency } from 'src/common/enums/transaction.enums';
 
 export class QrPaymentDto {
   @IsString()
   @IsNotEmpty()
-  qrPayload: string; // The decoded or raw string from the scan
+  qrPayload: string;
 
-  @IsOptional() // Amount is optional here if it was already in the QR payload
-  @IsNumber()
-  @IsPositive()
-  amount?: number;
-
-  @IsEnum(AliasType)
   @IsOptional()
-  senderAlias: AliasType = AliasType.MSISDN;
-
   @IsString()
-  @IsNotEmpty()
-  debtorAccount: string; // The sender's bank account
+  customerId?: string;
 
+  @IsIn(['ACCOUNT', 'WALLET'])
+  sourceType: 'ACCOUNT' | 'WALLET';
+
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  debtorName: string;
+  sourceAccountId?: string;
 
+  @IsOptional()
+  @IsString()
+  sourceWalletId?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceFinAddress?: string;
+
+  @IsOptional()
+  @IsString()
+  senderAlias?: string;
+
+  @IsOptional()
+  @IsString()
+  debtorName?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d+(\.\d{1,2})?$/)
+  amount?: string;
+
+  @IsOptional()
   @IsEnum(Currency)
-  currency: Currency;
+  currency?: Currency;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(140)
+  reference?: string;
+
+  @IsOptional()
+  @IsString()
+  narration?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(4, 6)
+  @Matches(/^\d{4,6}$/)
+  pin?: string;
+
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
 }

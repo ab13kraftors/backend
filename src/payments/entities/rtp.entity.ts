@@ -6,9 +6,13 @@ import {
   CreateDateColumn,
   Entity,
   PrimaryGeneratedColumn,
+  UpdateDateColumn,
+  Index,
 } from 'typeorm';
 
 @Entity('rtp_requests')
+@Index(['participantId', 'payerAlias', 'status'])
+@Index(['participantId', 'requesterAlias', 'status'])
 export class RTP {
   @PrimaryGeneratedColumn('uuid')
   rtpMsgId: string;
@@ -25,29 +29,50 @@ export class RTP {
   @Column()
   payerAlias: string;
 
+  @Column({ type: 'enum', enum: AliasType, default: AliasType.MSISDN })
+  payerAliasType: AliasType;
+
+  @Column({ nullable: true })
+  requesterFinAddress?: string;
+
+  @Column({ nullable: true })
+  payerFinAddress?: string;
+
   @Column({
     type: 'decimal',
     precision: 18,
     scale: 2,
-    transformer: {
-      to: (value: number) => value,
-      from: (value: string) => parseFloat(value),
-    },
+    default: '0.00',
   })
-  amount: number;
+  amount: string;
 
   @Column({ type: 'enum', enum: Currency, default: Currency.SLE })
   currency: Currency;
 
-  @Column()
-  message: string;
+  @Column({ nullable: true })
+  message?: string;
+
+  @Column({ nullable: true })
+  reference?: string;
 
   @Column({ type: 'enum', enum: RtpStatus, default: RtpStatus.PENDING })
   status: RtpStatus;
+
+  @Column({ nullable: true })
+  approvedTxId?: string;
+
+  @Column({ nullable: true })
+  rejectionReason?: string;
+
+  @Column({ nullable: true })
+  failureReason?: string;
 
   @CreateDateColumn()
   createdAt: Date;
 
   @Column({ type: 'timestamp' })
   expiresAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
 }

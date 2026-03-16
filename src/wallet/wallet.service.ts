@@ -6,27 +6,33 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository, EntityManager } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
+import Decimal from 'decimal.js';
 import * as crypto from 'crypto';
-import { Decimal } from 'decimal.js';
+
 import { Wallet } from './entities/wallet.entity';
+import { WalletLimit } from './entities/wallet-limit.entity';
 import { Transaction } from 'src/payments/entities/transaction.entity';
+
 import {
   TransactionType,
   TransactionStatus,
   Currency,
 } from 'src/common/enums/transaction.enums';
 import { WalletStatus } from 'src/common/enums/banking.enums';
+import { AccountType } from 'src/accounts/enums/account.enum';
+
 import { FundWalletDto } from './dto/fund-wallet.dto';
 import { WithdrawWalletDto } from './dto/withdraw-wallet.dto';
 import { TransferWalletDto } from './dto/transfer-wallet.dto';
+import { CreateWalletDto } from './dto/create-wallet.dto';
+
 import { AccountsService } from 'src/accounts/accounts.service';
 import { CustomerService } from 'src/customer/customer.service';
 import { LedgerService } from 'src/ledger/ledger.service';
-import { SYSTEM_POOL } from 'src/common/constants';
-import { WalletLimit } from './entities/wallet-limit.entity';
 import { KycService } from 'src/kyc/kyc.service';
 import { KycTier } from 'src/common/enums/kyc.enums';
+import { SYSTEM_POOL } from 'src/common/constants';
 
 @Injectable()
 export class WalletService {
@@ -34,31 +40,106 @@ export class WalletService {
 
   constructor(
     @InjectRepository(Wallet)
-    private wallRepo: Repository<Wallet>,
+    private readonly walletRepo: Repository<Wallet>,
 
     @InjectRepository(WalletLimit)
-    private limitRepo: Repository<WalletLimit>,
+    private readonly walletLimitRepo: Repository<WalletLimit>,
 
     @InjectRepository(Transaction)
-    private txRepo: Repository<Transaction>,
+    private readonly txRepo: Repository<Transaction>,
 
     @Inject(forwardRef(() => CustomerService))
-    private customerService: CustomerService,
+    private readonly customerService: CustomerService,
 
-    private accService: AccountsService,
-    private ledgerService: LedgerService,
-    private kycService: KycService,
-
-    private dataSource: DataSource,
+    private readonly accountsService: AccountsService,
+    private readonly ledgerService: LedgerService,
+    private readonly kycService: KycService,
+    private readonly dataSource: DataSource,
   ) {
-    Decimal.set({ precision: 18, rounding: Decimal.ROUND_HALF_UP });
+    Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
   }
 
-  async findByCustomer(ccuuid: string): Promise<Wallet> {
-    const wallet = await this.wallRepo.findOne({ where: { ccuuid } });
+  async createWallet(
+    dto: CreateWalletDto,
+    participantId: string,
+    manager?: EntityManager,
+  ): Promise<Wallet> {
+    const run = async (txManager: EntityManager): Promise<Wallet> => {
+      const walletRepository = txManager.getRepository(Wallet);
+      const walletLimitRepository = txManager.getRepository(WalletLimit);
+
+      const existing = await walletRepository.findOne({
+        where: { customerId: dto.customerId, participantId },
+      });
+
+      if (existing) {
+        return existing;
+      }
+
+      const finAddress = dto.finAddress?.trim() || `wallet.${dto.customerId}`;
+
+      const wallet = walletRepository.create({
+        customerId: dto.customerId,
+        participantId,
+        finAddress,
+        accountId: null,
+        currency: Currency.SLE,
+        pinAttempts: 0,
+        status: WalletStatus.ACTIVE,
+      });
+
+      const savedWallet = await walletRepository.save(wallet);
+
+      const walletAccount = await this.accountsService.createWalletAccount(
+        {
+          customerId: dto.customerId,
+          walletId: savedWallet.walletId,
+          participantId,
+          currency: Currency.SLE,
+          type: AccountType.WALLET,
+          finAddress,
+          metadata: {
+            walletId: savedWallet.walletId,
+            customerId: dto.customerId,
+          },
+        } as any,
+        txManager,
+      );
+
+      savedWallet.accountId = walletAccount.accountId;
+      await walletRepository.save(savedWallet);
+
+      await walletLimitRepository.save(
+        walletLimitRepository.create({
+          walletId: savedWallet.walletId,
+          dailySendLimit: '10000.00',
+          dailyReceiveLimit: '10000.00',
+          singleTxLimit: '5000.00',
+        }),
+      );
+
+      return savedWallet;
+    };
+
+    if (manager) {
+      return run(manager);
+    }
+
+    return this.dataSource.transaction(run);
+  }
+
+  async findByCustomer(
+    customerId: string,
+    participantId: string,
+  ): Promise<Wallet> {
+    const wallet = await this.walletRepo.findOne({
+      where: { customerId, participantId },
+    });
 
     if (!wallet) {
-      throw new NotFoundException(`Wallet for customer ${ccuuid} not found`);
+      throw new NotFoundException(
+        `Wallet for customer ${customerId} not found`,
+      );
     }
 
     if (wallet.status !== WalletStatus.ACTIVE) {
@@ -70,42 +151,39 @@ export class WalletService {
     return wallet;
   }
 
-  async createWallet(
-    ccuuid: string,
+  async getWallet(
+    walletId: string,
     participantId: string,
-    manager?: EntityManager,
+  ): Promise<Wallet | null> {
+    return this.walletRepo.findOne({
+      where: { walletId, participantId },
+    });
+  }
+
+  async findByFinAddress(
+    finAddress: string,
+    participantId?: string,
+  ): Promise<Wallet | null> {
+    return this.walletRepo.findOne({
+      where: participantId ? { finAddress, participantId } : { finAddress },
+    });
+  }
+
+  async getWalletByFinAddress(
+    finAddress: string,
+    participantId?: string,
   ): Promise<Wallet> {
-    const walletRepo = manager ? manager.getRepository(Wallet) : this.wallRepo;
+    const wallet = await this.findByFinAddress(finAddress, participantId);
 
-    const finAddress = `WALLET-${ccuuid}`;
-
-    if (await walletRepo.findOne({ where: { finAddress } })) {
-      throw new BadRequestException('Wallet already exists');
+    if (!wallet) {
+      throw new NotFoundException('Receiver wallet not found');
     }
 
-    const wallet = walletRepo.create({
-      ccuuid,
-      participantId,
-      finAddress,
-      currency: Currency.SLE,
-      status: WalletStatus.ACTIVE,
-      pinAttempts: 0,
-    });
+    if (wallet.status !== WalletStatus.ACTIVE) {
+      throw new BadRequestException('Receiver wallet not active');
+    }
 
-    const saved = await walletRepo.save(wallet);
-
-    await this.accService.create(
-      participantId,
-      {
-        finAddress,
-        currency: Currency.SLE,
-      },
-      manager,
-    );
-
-    //  add limit id matches wallet and wallet limit repo
-
-    return saved;
+    return wallet;
   }
 
   async getBalance(walletId: string, participantId: string) {
@@ -117,6 +195,8 @@ export class WalletService {
 
     return {
       walletId: wallet.walletId,
+      accountId: wallet.accountId,
+      customerId: wallet.customerId,
       balance,
       currency: wallet.currency,
       status: wallet.status,
@@ -132,68 +212,86 @@ export class WalletService {
         { receiverFinAddress: wallet.finAddress, participantId },
       ],
       order: { createdAt: 'DESC' },
-      take: 20,
+      take: 50,
     });
   }
 
-  async fundWallet(
-    dto: FundWalletDto & { idempotencyKey?: string },
-    participantId: string,
-  ) {
+  async fundWallet(dto: FundWalletDto, participantId: string) {
     const wallet = await this.validateActiveWallet(dto.walletId, participantId);
 
-    await this.kycService.requireTier(wallet.ccuuid, KycTier.SOFT_APPROVED);
-
+    await this.kycService.requireTier(wallet.customerId, KycTier.SOFT_APPROVED);
     await this.verifyPinWithLock(wallet, participantId, dto.pin);
 
     const amount = new Decimal(dto.amount);
-
-    if (amount.isNaN() || amount.lessThanOrEqualTo(0)) {
+    if (amount.isNaN() || amount.lte(0)) {
       throw new BadRequestException('Invalid amount');
     }
+
     const amountStr = amount.toFixed(2);
+    const sourceFinAddress =
+      dto.sourceFinAddress?.trim() || this.SYSTEM_POOL_FIN;
+    const txId = `WFUND-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
 
-    const txId = `FUND-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    return this.dataSource.transaction('SERIALIZABLE', async (manager) => {
+      await this.accountsService.assertFinAddressActive(
+        sourceFinAddress,
+        manager,
+      );
+      await this.accountsService.assertFinAddressActive(
+        wallet.finAddress,
+        manager,
+      );
 
-    return this.dataSource.transaction(async (manager) => {
-      const transferResult = await this.ledgerService.postTransfer({
-        txId,
-        idempotencyKey: dto.idempotencyKey,
-        reference: 'Wallet funding from system pool',
-        participantId,
-        postedBy: 'wallet-service',
-        legs: [
-          {
-            finAddress: this.SYSTEM_POOL_FIN,
-            amount: amountStr,
-            isCredit: false, // debit system
-            memo: `Funded ${wallet.finAddress}`,
-          },
-          {
-            finAddress: wallet.finAddress,
-            amount: amountStr,
-            isCredit: true, // credit wallet
-            memo: 'Funding from system pool',
-          },
-        ],
-      });
+      const transferResult = await this.ledgerService.postTransfer(
+        {
+          txId,
+          idempotencyKey: dto.idempotencyKey,
+          reference: `Wallet funding ${wallet.walletId}`,
+          participantId,
+          postedBy: 'wallet-service',
+          currency: wallet.currency,
+          legs: [
+            {
+              finAddress: sourceFinAddress,
+              amount: amountStr,
+              isCredit: false,
+              memo: `Wallet funding source -> ${wallet.finAddress}`,
+            },
+            {
+              finAddress: wallet.finAddress,
+              amount: amountStr,
+              isCredit: true,
+              memo: `Wallet funded from ${sourceFinAddress}`,
+            },
+          ],
+        },
+        manager,
+      );
 
       if (transferResult.status === 'already_processed') {
-        return { ...transferResult, message: 'Already processed' };
+        const newBalance = await this.ledgerService.getDerivedBalance(
+          wallet.finAddress,
+        );
+        return {
+          status: 'success',
+          journalId: transferResult.journalId,
+          txId: transferResult.txId,
+          newBalance,
+        };
       }
 
       await manager.getRepository(Transaction).save(
-        manager.create(Transaction, {
-          participantId: wallet.participantId,
+        manager.getRepository(Transaction).create({
+          participantId,
           channel: TransactionType.CREDIT_TRANSFER,
-          senderAlias: 'SYSTEM_POOL',
-          receiverAlias: wallet.ccuuid,
-          senderFinAddress: this.SYSTEM_POOL_FIN,
+          senderAlias: sourceFinAddress,
+          receiverAlias: wallet.customerId,
+          senderFinAddress: sourceFinAddress,
           receiverFinAddress: wallet.finAddress,
           amount: Number(amountStr),
           currency: wallet.currency,
           status: TransactionStatus.COMPLETED,
-          reference: 'Wallet Funding',
+          reference: `Wallet Funding ${txId}`,
         }),
       );
 
@@ -210,76 +308,82 @@ export class WalletService {
     });
   }
 
-  async withdrawWallet(
-    dto: WithdrawWalletDto & { idempotencyKey?: string },
-    participantId: string,
-  ) {
+  async withdrawWallet(dto: WithdrawWalletDto, participantId: string) {
     const wallet = await this.validateActiveWallet(dto.walletId, participantId);
 
-    await this.kycService.requireTier(wallet.ccuuid, KycTier.HARD_APPROVED);
-
+    await this.kycService.requireTier(wallet.customerId, KycTier.HARD_APPROVED);
     await this.verifyPinWithLock(wallet, participantId, dto.pin);
 
     const amount = new Decimal(dto.amount);
-
-    if (amount.isNaN() || amount.lessThanOrEqualTo(0)) {
+    if (amount.isNaN() || amount.lte(0)) {
       throw new BadRequestException('Invalid amount');
     }
 
     const amountStr = amount.toFixed(2);
+    const destinationFinAddress =
+      dto.destinationFinAddress?.trim() || this.SYSTEM_POOL_FIN;
+    const txId = `WWD-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
 
-    return this.dataSource.transaction(async (manager) => {
-      // Balance check inside transaction
-      const currentStr = await this.ledgerService.getDerivedBalance(
+    return this.dataSource.transaction('SERIALIZABLE', async (manager) => {
+      await this.accountsService.assertFinAddressActive(
         wallet.finAddress,
+        manager,
       );
-      const current = new Decimal(currentStr);
+      await this.accountsService.assertFinAddressActive(
+        destinationFinAddress,
+        manager,
+      );
 
-      if (current.lessThan(amount)) {
-        throw new BadRequestException(
-          `Insufficient balance: ${current.toFixed(2)}`,
-        );
-      }
-
-      const txId = `WD-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-      const transferResult = await this.ledgerService.postTransfer({
-        txId,
-        idempotencyKey: dto.idempotencyKey,
-        reference: 'Wallet withdrawal to system pool',
-        participantId,
-        postedBy: 'wallet-service',
-        legs: [
-          {
-            finAddress: wallet.finAddress,
-            amount: amountStr,
-            isCredit: false, // debit wallet
-            memo: `Withdrawal to system`,
-          },
-          {
-            finAddress: this.SYSTEM_POOL_FIN,
-            amount: amountStr,
-            isCredit: true, // credit system
-            memo: `Withdrawal from ${wallet.finAddress}`,
-          },
-        ],
-      });
+      const transferResult = await this.ledgerService.postTransfer(
+        {
+          txId,
+          idempotencyKey: dto.idempotencyKey,
+          reference: `Wallet withdrawal ${wallet.walletId}`,
+          participantId,
+          postedBy: 'wallet-service',
+          currency: wallet.currency,
+          legs: [
+            {
+              finAddress: wallet.finAddress,
+              amount: amountStr,
+              isCredit: false,
+              memo: `Wallet withdrawal -> ${destinationFinAddress}`,
+            },
+            {
+              finAddress: destinationFinAddress,
+              amount: amountStr,
+              isCredit: true,
+              memo: `Wallet withdrawal from ${wallet.finAddress}`,
+            },
+          ],
+        },
+        manager,
+      );
 
       if (transferResult.status === 'already_processed') {
-        return { ...transferResult, message: 'Already processed' };
+        const newBalance = await this.ledgerService.getDerivedBalance(
+          wallet.finAddress,
+        );
+        return {
+          status: 'success',
+          journalId: transferResult.journalId,
+          txId: transferResult.txId,
+          newBalance,
+        };
       }
 
       await manager.getRepository(Transaction).save(
-        manager.create(Transaction, {
-          participantId: wallet.participantId,
+        manager.getRepository(Transaction).create({
+          participantId,
           channel: TransactionType.CREDIT_TRANSFER,
-          senderAlias: wallet.ccuuid,
-          receiverAlias: 'SYSTEM_POOL',
+          senderAlias: wallet.customerId,
+          receiverAlias: destinationFinAddress,
           senderFinAddress: wallet.finAddress,
-          receiverFinAddress: this.SYSTEM_POOL_FIN,
+          receiverFinAddress: destinationFinAddress,
           amount: Number(amountStr),
           currency: wallet.currency,
           status: TransactionStatus.COMPLETED,
-          reference: 'Wallet Withdrawal',
+          reference: `Wallet Withdrawal ${txId}`,
         }),
       );
 
@@ -301,7 +405,6 @@ export class WalletService {
       dto.senderWalletId,
       participantId,
     );
-
     await this.verifyPinWithLock(sender, participantId, dto.pin);
 
     const receiver = await this.getWalletByFinAddress(dto.receiverFinAddress);
@@ -311,137 +414,187 @@ export class WalletService {
     }
 
     const amount = new Decimal(dto.amount);
-
-    if (amount.gt(5000)) {
-      await this.kycService.requireTier(sender.ccuuid, KycTier.HARD_APPROVED);
-    } else {
-      await this.kycService.requireTier(sender.ccuuid, KycTier.SOFT_APPROVED);
-    }
-
-    if (amount.isNaN() || amount.lessThanOrEqualTo(0)) {
+    if (amount.isNaN() || amount.lte(0)) {
       throw new BadRequestException('Invalid amount');
     }
 
-    const amountStr = amount.toFixed(2);
-
-    return this.dataSource.transaction(async (manager) => {
-      // Balance check inside transaction
-      const senderBalStr = await this.ledgerService.getDerivedBalance(
-        sender.finAddress,
+    if (amount.gt(5000)) {
+      await this.kycService.requireTier(
+        sender.customerId,
+        KycTier.HARD_APPROVED,
       );
-      const senderBal = new Decimal(senderBalStr);
+    } else {
+      await this.kycService.requireTier(
+        sender.customerId,
+        KycTier.SOFT_APPROVED,
+      );
+    }
 
-      if (senderBal.lessThan(amount)) {
-        throw new BadRequestException(
-          `Insufficient balance: ${senderBal.toFixed(2)}`,
-        );
-      }
-      const limit = await manager.getRepository(WalletLimit).findOne({
+    const amountStr = amount.toFixed(2);
+    const txId = `WTRF-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+
+    return this.dataSource.transaction('SERIALIZABLE', async (manager) => {
+      await this.accountsService.assertFinAddressActive(
+        sender.finAddress,
+        manager,
+      );
+      await this.accountsService.assertFinAddressActive(
+        receiver.finAddress,
+        manager,
+      );
+
+      const senderLimit = await manager.getRepository(WalletLimit).findOne({
         where: { walletId: sender.walletId },
       });
 
-      if (limit) {
+      if (senderLimit) {
         const dailySent = await this.calculateDailySent(
           manager,
           sender.finAddress,
         );
-        const newDaily = new Decimal(dailySent).add(amount);
+        const newDailySent = new Decimal(dailySent).add(amount);
 
-        if (newDaily.gt(limit.dailySendLimit)) {
+        if (newDailySent.gt(senderLimit.dailySendLimit)) {
           throw new BadRequestException('Daily send limit exceeded');
         }
 
-        if (amount.gt(limit.singleTxLimit)) {
+        if (amount.gt(senderLimit.singleTxLimit)) {
           throw new BadRequestException(
             'Amount exceeds single transaction limit',
           );
         }
       }
 
-      const txId = `TRF-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-
-      const transferResult = await this.ledgerService.postTransfer({
-        txId,
-        idempotencyKey: dto.idempotencyKey,
-        reference: `Wallet-to-wallet ${txId}`,
-        participantId,
-        postedBy: 'wallet-service',
-        legs: [
-          {
-            finAddress: sender.finAddress,
-            amount: amountStr,
-            isCredit: false,
-            memo: `Sent to ${receiver.ccuuid}`,
-          },
-          {
-            finAddress: receiver.finAddress,
-            amount: amountStr,
-            isCredit: true,
-            memo: `Received from ${sender.ccuuid}`,
-          },
-        ],
+      const receiverLimit = await manager.getRepository(WalletLimit).findOne({
+        where: { walletId: receiver.walletId },
       });
 
+      if (receiverLimit) {
+        const dailyReceived = await this.calculateDailyReceived(
+          manager,
+          receiver.finAddress,
+        );
+        const newDailyReceived = new Decimal(dailyReceived).add(amount);
+
+        if (newDailyReceived.gt(receiverLimit.dailyReceiveLimit)) {
+          throw new BadRequestException(
+            'Receiver daily receive limit exceeded',
+          );
+        }
+      }
+
+      const transferResult = await this.ledgerService.postTransfer(
+        {
+          txId,
+          idempotencyKey: dto.idempotencyKey,
+          reference: `Wallet to wallet ${txId}`,
+          participantId,
+          postedBy: 'wallet-service',
+          currency: sender.currency,
+          legs: [
+            {
+              finAddress: sender.finAddress,
+              amount: amountStr,
+              isCredit: false,
+              memo: `Wallet transfer to ${receiver.finAddress}`,
+            },
+            {
+              finAddress: receiver.finAddress,
+              amount: amountStr,
+              isCredit: true,
+              memo: `Wallet transfer from ${sender.finAddress}`,
+            },
+          ],
+        },
+        manager,
+      );
+
       if (transferResult.status === 'already_processed') {
-        return { ...transferResult, message: 'Already processed' };
+        const senderNewBalance = await this.ledgerService.getDerivedBalance(
+          sender.finAddress,
+        );
+        const receiverNewBalance = await this.ledgerService.getDerivedBalance(
+          receiver.finAddress,
+        );
+
+        return {
+          status: 'success',
+          journalId: transferResult.journalId,
+          txId: transferResult.txId,
+          senderNewBalance,
+          receiverNewBalance,
+        };
       }
 
       await manager.getRepository(Transaction).save(
-        manager.create(Transaction, {
-          participantId: sender.participantId,
+        manager.getRepository(Transaction).create({
+          participantId,
           channel: TransactionType.CREDIT_TRANSFER,
-          senderAlias: sender.ccuuid,
-          receiverAlias: receiver.ccuuid,
+          senderAlias: sender.customerId,
+          receiverAlias: receiver.customerId,
           senderFinAddress: sender.finAddress,
           receiverFinAddress: receiver.finAddress,
           amount: Number(amountStr),
           currency: sender.currency,
           status: TransactionStatus.COMPLETED,
-          reference: `P2P ${txId}`,
+          reference: `Wallet P2P ${txId}`,
         }),
       );
 
-      const [sNew, rNew] = await Promise.all([
-        this.ledgerService.getDerivedBalance(sender.finAddress),
-        this.ledgerService.getDerivedBalance(receiver.finAddress),
-      ]);
+      const senderNewBalance = await this.ledgerService.getDerivedBalance(
+        sender.finAddress,
+      );
+      const receiverNewBalance = await this.ledgerService.getDerivedBalance(
+        receiver.finAddress,
+      );
 
       return {
         status: 'success',
         journalId: transferResult.journalId,
         txId,
-        senderNewBalance: sNew,
-        receiverNewBalance: rNew,
+        senderNewBalance,
+        receiverNewBalance,
       };
     });
   }
 
-  async getWallet(
+  async updateWalletStatus(
     walletId: string,
     participantId: string,
-  ): Promise<Wallet | null> {
-    return this.wallRepo.findOne({
+    status: WalletStatus,
+  ): Promise<Wallet> {
+    const wallet = await this.walletRepo.findOne({
       where: { walletId, participantId },
     });
+
+    if (!wallet) {
+      throw new NotFoundException('Wallet not found');
+    }
+
+    wallet.status = status;
+    return this.walletRepo.save(wallet);
   }
 
-  public async verifyPinWithLock(
+  async verifyPinWithLock(
     wallet: Wallet,
     participantId: string,
     pin: string,
   ): Promise<void> {
     await this.dataSource.transaction(async (manager: EntityManager) => {
-      // 1. Lock the wallet row (pessimistic write) — only one request can proceed
       const lockedWallet = await manager
         .createQueryBuilder(Wallet, 'wallet')
-        .where('wallet.walletId = :id AND wallet.participantId = :pid', {
-          id: wallet.walletId,
-          pid: participantId,
+        .where('wallet.walletId = :walletId', {
+          walletId: wallet.walletId,
         })
-        .setLock('pessimistic_write') // ← THIS IS THE FIX
+        .andWhere('wallet.participantId = :participantId', {
+          participantId,
+        })
+        .setLock('pessimistic_write')
         .getOne();
 
-      if (!lockedWallet) throw new NotFoundException('Wallet not found');
+      if (!lockedWallet) {
+        throw new NotFoundException('Wallet not found');
+      }
 
       if (lockedWallet.status === WalletStatus.LOCKED) {
         throw new BadRequestException(
@@ -449,58 +602,53 @@ export class WalletService {
         );
       }
 
+      let pinValid = false;
+
       try {
         await this.customerService.verifyPin(
-          lockedWallet.ccuuid,
+          lockedWallet.customerId,
           participantId,
           pin,
         );
-        lockedWallet.pinAttempts = 0;
+        pinValid = true;
       } catch {
         lockedWallet.pinAttempts = (lockedWallet.pinAttempts ?? 0) + 1;
+
         if (lockedWallet.pinAttempts >= 3) {
           lockedWallet.status = WalletStatus.LOCKED;
         }
+
+        await manager.save(lockedWallet);
+
         throw new BadRequestException(
-          `Invalid PIN. Attempt ${lockedWallet.pinAttempts}/3` +
-            (lockedWallet.status === WalletStatus.LOCKED
+          `Invalid PIN. Attempt ${lockedWallet.pinAttempts}/3${
+            lockedWallet.status === WalletStatus.LOCKED
               ? '. Wallet locked.'
-              : ''),
+              : ''
+          }`,
         );
       }
 
-      await manager.save(lockedWallet);
+      if (pinValid) {
+        if (lockedWallet.pinAttempts !== 0) {
+          lockedWallet.pinAttempts = 0;
+          await manager.save(lockedWallet);
+        }
+      }
     });
-  }
-  private async calculateDailySent(
-    manager: EntityManager,
-    finAddress: string,
-  ): Promise<string> {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0); // Set to midnight of the current day
-
-    const result = await manager
-      .getRepository(Transaction)
-      .createQueryBuilder('tx')
-      .select('SUM(tx.amount)', 'total')
-      .where('tx.senderFinAddress = :finAddress', { finAddress })
-      .andWhere('tx.status = :status', { status: TransactionStatus.COMPLETED })
-      .andWhere('tx.createdAt >= :startOfDay', { startOfDay: today })
-      .getRawOne();
-
-    // TypeORM SUM returns a string for decimal columns in most SQL dialects
-    return result?.total || '0';
   }
 
   private async validateActiveWallet(
     walletId: string,
     participantId: string,
   ): Promise<Wallet> {
-    const wallet = await this.wallRepo.findOne({
+    const wallet = await this.walletRepo.findOne({
       where: { walletId, participantId },
     });
 
-    if (!wallet) throw new NotFoundException('Wallet not found');
+    if (!wallet) {
+      throw new NotFoundException('Wallet not found');
+    }
 
     if (wallet.status !== WalletStatus.ACTIVE) {
       throw new BadRequestException(
@@ -511,16 +659,41 @@ export class WalletService {
     return wallet;
   }
 
-  async getWalletByFinAddress(finAddress: string): Promise<Wallet> {
-    const wallet = await this.wallRepo.findOne({
-      where: { finAddress },
-    });
+  private async calculateDailySent(
+    manager: EntityManager,
+    finAddress: string,
+  ): Promise<string> {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
 
-    if (!wallet) throw new NotFoundException('Receiver wallet not found');
+    const result = await manager
+      .getRepository(Transaction)
+      .createQueryBuilder('tx')
+      .select('COALESCE(SUM(tx.amount), 0)', 'total')
+      .where('tx.senderFinAddress = :finAddress', { finAddress })
+      .andWhere('tx.status = :status', { status: TransactionStatus.COMPLETED })
+      .andWhere('tx.createdAt >= :startOfDay', { startOfDay })
+      .getRawOne<{ total: string }>();
 
-    if (wallet.status !== WalletStatus.ACTIVE)
-      throw new BadRequestException('Receiver wallet not active');
+    return result?.total ?? '0';
+  }
 
-    return wallet;
+  private async calculateDailyReceived(
+    manager: EntityManager,
+    finAddress: string,
+  ): Promise<string> {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const result = await manager
+      .getRepository(Transaction)
+      .createQueryBuilder('tx')
+      .select('COALESCE(SUM(tx.amount), 0)', 'total')
+      .where('tx.receiverFinAddress = :finAddress', { finAddress })
+      .andWhere('tx.status = :status', { status: TransactionStatus.COMPLETED })
+      .andWhere('tx.createdAt >= :startOfDay', { startOfDay })
+      .getRawOne<{ total: string }>();
+
+    return result?.total ?? '0';
   }
 }

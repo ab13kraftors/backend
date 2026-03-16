@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 
 @Entity('bulk_batches')
+@Index(['participantId', 'status'])
 export class BulkBatch {
   @PrimaryGeneratedColumn('uuid')
   bulkId: string;
@@ -17,14 +18,29 @@ export class BulkBatch {
   @Column()
   participantId: string;
 
-  @Column()
-  debtorBic: string;
+  @Column({ nullable: true })
+  customerId?: string;
+
+  @Column({ nullable: true })
+  debtorBic?: string;
 
   @Column()
-  debtorAccount: string;
+  sourceType: 'ACCOUNT' | 'WALLET';
+
+  @Column({ nullable: true })
+  sourceAccountId?: string;
+
+  @Column({ nullable: true })
+  sourceWalletId?: string;
+
+  @Column()
+  sourceFinAddress: string;
 
   @Column()
   fileName: string;
+
+  @Column({ type: 'enum', enum: ['SLE'], default: 'SLE' })
+  currency: 'SLE';
 
   @Column({ default: 0 })
   totalRecords: number;
@@ -35,11 +51,31 @@ export class BulkBatch {
   @Column({ default: 0 })
   failedRecords: number;
 
-  @Column({ type: 'enum', enum: BulkStatus, default: BulkStatus.PENDING })
+  @Column({
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: '0.00',
+  })
+  totalAmount: string;
+
+  @Column({
+    type: 'decimal',
+    precision: 18,
+    scale: 2,
+    default: '0.00',
+  })
+  processedAmount: string;
+
+  @Column({
+    type: 'enum',
+    enum: BulkStatus,
+    default: BulkStatus.PENDING,
+  })
   status: BulkStatus;
 
   @Column({ nullable: true })
-  uploadedBy: string;
+  uploadedBy?: string;
 
   @CreateDateColumn()
   createdAt: Date;

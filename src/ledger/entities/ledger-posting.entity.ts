@@ -1,38 +1,50 @@
 import {
-  Entity,
-  PrimaryGeneratedColumn,
   Column,
-  ManyToOne,
-  CreateDateColumn,
+  Entity,
   Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
 } from 'typeorm';
 import { LedgerJournal } from './ledger-journal.entity';
+import { LedgerEntrySide } from '../enums/ledger-entry-side.enums';
+import { Currency } from 'src/common/enums/transaction.enums';
 
 @Entity('ledger_postings')
-@Index('idx_posting_account', ['accountId'])
-@Index('idx_posting_created', ['createdAt'])
+@Index('IDX_LEDGER_POSTING_ACCOUNT_ID', ['accountId'])
+@Index('IDX_LEDGER_POSTING_JOURNAL_ID', ['journalId'])
 export class LedgerPosting {
   @PrimaryGeneratedColumn('uuid')
   postingId: string;
 
+  @Column({ type: 'uuid' })
+  journalId: string;
+
+  @Column({ type: 'uuid' })
+  accountId: string;
+
+  @Column({
+    type: 'enum',
+    enum: LedgerEntrySide,
+  })
+  side: LedgerEntrySide;
+
+  @Column({ type: 'numeric', precision: 20, scale: 6 })
+  amount: string;
+
+  @Column({
+    type: 'enum',
+    enum: Currency,
+    default: Currency.SLE,
+  })
+  currency: Currency;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  memo?: string;
+
   @ManyToOne(() => LedgerJournal, (journal) => journal.postings, {
     onDelete: 'CASCADE',
   })
+  @JoinColumn({ name: 'journalId' })
   journal: LedgerJournal;
-
-  @Column()
-  @Index() // repeated for clarity
-  accountId: string;
-
-  @Column({ type: 'numeric', precision: 18, scale: 6 }) // better than string for sums
-  amount: string;
-
-  @Column({ type: 'enum', enum: ['DEBIT', 'CREDIT'] })
-  side: 'DEBIT' | 'CREDIT';
-
-  @Column({ nullable: true })
-  memo?: string;
-
-  @CreateDateColumn()
-  createdAt: Date;
 }

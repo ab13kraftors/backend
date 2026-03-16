@@ -1,15 +1,20 @@
+import { Currency } from 'src/common/enums/transaction.enums';
+
+export interface LedgerTransferLegInput {
+  finAddress: string;
+  amount: string;
+  isCredit: boolean;
+  memo?: string;
+}
+
 export interface LedgerTransferInput {
-  idempotencyKey?: string;
   txId: string;
-  reference: string;
+  reference?: string;
   participantId: string;
-  postedBy: string;
-  legs: Array<{
-    finAddress: string; // identifies account
-    amount: string; // positive number – direction determined by isCredit
-    isCredit: boolean;
-    memo?: string;
-  }>;
+  postedBy?: string;
+  idempotencyKey?: string;
+  currency: Currency;
+  legs: LedgerTransferLegInput[];
 }
 
 export interface LedgerTransferResult {

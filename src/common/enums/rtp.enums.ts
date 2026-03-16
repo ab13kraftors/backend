@@ -3,4 +3,5 @@ export enum RtpStatus {
   ACCEPTED = 'ACCEPTED',
   REJECTED = 'REJECTED',
   EXPIRED = 'EXPIRED',
+  FAILED = 'FAILED',
 }

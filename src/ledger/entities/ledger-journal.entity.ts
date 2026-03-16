@@ -1,47 +1,54 @@
 import {
-  Entity,
-  PrimaryGeneratedColumn,
   Column,
+  CreateDateColumn,
+  Entity,
   Index,
   OneToMany,
+  PrimaryGeneratedColumn,
 } from 'typeorm';
+import { Currency } from 'src/common/enums/transaction.enums';
 import { LedgerPosting } from './ledger-posting.entity';
 
 @Entity('ledger_journals')
-@Index('idx_journal_txid', ['txId'], { unique: true })
-@Index('idx_journal_idempotency', ['idempotencyKey'])
-@Index('idx_journal_participant', ['participantId'])
+@Index('IDX_LEDGER_JOURNAL_TX_ID', ['txId'], { unique: true })
+@Index('IDX_LEDGER_JOURNAL_IDEMPOTENCY', ['idempotencyKey'], { unique: true })
 export class LedgerJournal {
   @PrimaryGeneratedColumn('uuid')
   journalId: string;
 
-  @Column({ unique: true })
-  txId: string; // business / idempotent transaction identifier
+  @Column({ type: 'varchar', length: 120, unique: true })
+  txId: string;
 
-  @Column({ nullable: true, unique: true })
-  idempotencyKey?: string; // client-provided key to prevent duplicates
+  @Column({ type: 'varchar', length: 150, nullable: true, unique: true })
+  idempotencyKey?: string;
 
-  @Column()
-  reference: string; // human readable purpose e.g. "RTP approval – req-abc123"
+  @Column({ type: 'varchar', length: 255 })
+  reference: string;
 
-  @Column()
+  @Column({ type: 'varchar', length: 100 })
   participantId: string;
 
-  @Column()
-  postedBy: string; // who triggered: participantId, system, admin-uuid, etc.
+  @Column({ type: 'varchar', length: 100, default: 'system' })
+  postedBy: string;
 
-  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  @Column({
+    type: 'enum',
+    enum: Currency,
+    default: Currency.SLE,
+  })
+  currency: Currency;
+
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  reversesTxId?: string | null;
+
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  reversedByTxId?: string | null;
+
+  @CreateDateColumn()
   postedAt: Date;
 
   @OneToMany(() => LedgerPosting, (posting) => posting.journal, {
     cascade: true,
-    eager: true,
   })
   postings: LedgerPosting[];
-
-  @Column({ nullable: true })
-  reversesTxId?: string; // points to the txId this journal reverses
-
-  @Column({ nullable: true })
-  reversedByTxId?: string; // points to the reversal txId (for original)
 }

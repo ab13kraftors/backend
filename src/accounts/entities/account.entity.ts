@@ -1,37 +1,52 @@
 import {
-  Entity,
-  PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
-  UpdateDateColumn,
+  Entity,
   Index,
-  OneToOne,
   JoinColumn,
+  ManyToOne,
+  OneToOne,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
 } from 'typeorm';
 import { Currency } from 'src/common/enums/transaction.enums';
+import { Customer } from 'src/customer/entities/customer.entity';
 import { Wallet } from 'src/wallet/entities/wallet.entity';
-
-export enum AccountStatus {
-  ACTIVE = 'ACTIVE',
-  FROZEN = 'FROZEN',
-  CLOSED = 'CLOSED',
-}
+import { AccountType, AccountStatus } from '../enums/account.enum';
 
 @Entity('accounts')
-@Index('idx_account_finaddress', ['finAddress'], { unique: true })
-@Index('idx_account_participant', ['participantId'])
+@Index('IDX_ACCOUNT_ACCOUNT_NUMBER', ['accountNumber'], { unique: true })
+@Index('IDX_ACCOUNT_FIN_ADDRESS', ['finAddress'], { unique: true })
+@Index('IDX_ACCOUNT_CUSTOMER_TYPE', ['customerId', 'type'])
+@Index('IDX_ACCOUNT_WALLET_TYPE', ['walletId', 'type'])
 export class Account {
   @PrimaryGeneratedColumn('uuid')
   accountId: string;
 
-  @Column({ unique: true })
-  finAddress: string;
+  @Column({ type: 'varchar', length: 30, unique: true })
+  accountNumber: string;
 
-  @Column()
+  @Column({ type: 'uuid', nullable: true })
+  customerId: string | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  walletId: string | null;
+
+  @Column({ type: 'varchar', length: 100 })
   participantId: string;
 
-  @Column({ type: 'enum', enum: Currency, default: Currency.SLE })
+  @Column({
+    type: 'enum',
+    enum: Currency,
+    default: Currency.SLE,
+  })
   currency: Currency;
+
+  @Column({
+    type: 'enum',
+    enum: AccountType,
+  })
+  type: AccountType;
 
   @Column({
     type: 'enum',
@@ -40,19 +55,26 @@ export class Account {
   })
   status: AccountStatus;
 
-  // Optional: link to wallet if 1:1 relationship
-  @OneToOne(() => Wallet, (wallet) => wallet.account, { nullable: true })
-  @JoinColumn()
-  wallet?: Wallet;
+  @Column({ type: 'varchar', length: 255, nullable: true, unique: true })
+  finAddress: string | null;
 
-  @CreateDateColumn({ type: 'timestamptz' })
+  @Column({ type: 'boolean', default: false })
+  isDefault: boolean;
+
+  @Column({ type: 'jsonb', nullable: true })
+  metadata?: Record<string, any> | null;
+
+  @CreateDateColumn()
   createdAt: Date;
 
-  @UpdateDateColumn({ type: 'timestamptz' })
+  @UpdateDateColumn()
   updatedAt: Date;
 
-  // Future fields you will likely need
-  // tier?: string;           // BASIC_KYC, FULL_KYC, CORPORATE
-  // riskScore?: number;
-  // frozenReason?: string;
+  @ManyToOne(() => Customer, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'customerId' })
+  customer?: Customer | null;
+
+  @OneToOne(() => Wallet, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'walletId' })
+  wallet?: Wallet | null;
 }

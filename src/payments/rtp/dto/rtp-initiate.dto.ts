@@ -1,10 +1,10 @@
 import {
-  IsNotEmpty,
-  IsString,
   IsEnum,
-  IsNumber,
-  IsPositive,
+  IsNotEmpty,
   IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
 } from 'class-validator';
 import { AliasType } from 'src/common/enums/alias.enums';
 import { Currency } from 'src/common/enums/transaction.enums';
@@ -25,9 +25,9 @@ export class RtpInitiateDto {
   @IsOptional()
   payerAliasType: AliasType = AliasType.MSISDN;
 
-  @IsNumber()
-  @IsPositive()
-  amount: number;
+  @IsString()
+  @Matches(/^\d+(\.\d{1,2})?$/)
+  amount: string;
 
   @IsEnum(Currency)
   @IsOptional()
@@ -35,5 +35,11 @@ export class RtpInitiateDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(140)
   message?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(140)
+  reference?: string;
 }

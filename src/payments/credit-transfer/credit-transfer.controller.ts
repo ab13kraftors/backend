@@ -1,22 +1,19 @@
-import { Controller, Post, Body } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { CreditTransferService } from './credit-transfer.service';
 import { CreditTransferDto } from './dto/credit-transfer.dto';
 import { Participant } from 'src/common/decorators/participant/participant.decorator';
+import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 
-@Controller('/api/switch/v1/payments')
+@UseGuards(JwtAuthGuard)
+@Controller('/api/fp/payments')
 export class CreditTransferController {
-  constructor(
-    // Inject CreditTransfer service
-    private readonly cts: CreditTransferService,
-  ) {}
+  constructor(private readonly creditTransferService: CreditTransferService) {}
 
-  // ================== initiate ==================
-  // Initiates a credit transfer payment
   @Post('credit-transfer')
   initiate(
     @Body() dto: CreditTransferDto,
     @Participant() participantId: string,
   ) {
-    return this.cts.initiate(participantId, dto);
+    return this.creditTransferService.initiate(participantId, dto);
   }
 }

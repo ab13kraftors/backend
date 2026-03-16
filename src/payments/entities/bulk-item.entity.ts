@@ -7,13 +7,17 @@ export enum ItemStatus {
 }
 
 @Entity('bulk_items')
+@Index(['bulkId', 'status'])
 export class BulkItem {
   @PrimaryGeneratedColumn('uuid')
   itemId: string;
 
   @Index()
   @Column()
-  bulkId: string; // FK to BulkBatch — add @ManyToOne if joining
+  bulkId: string;
+
+  @Column({ nullable: true })
+  txId?: string;
 
   @Column()
   senderAlias: string;
@@ -21,18 +25,21 @@ export class BulkItem {
   @Column()
   receiverAlias: string;
 
-  @Column({ type: 'decimal', precision: 18, scale: 2 })
-  amount: number;
+  @Column({ nullable: true })
+  receiverFinAddress?: string;
 
-  @Column({ type: 'enum', enum: Currency })
+  @Column({ type: 'decimal', precision: 18, scale: 2, default: '0.00' })
+  amount: string;
+
+  @Column({ type: 'enum', enum: Currency, default: Currency.SLE })
   currency: Currency;
 
   @Column({ type: 'enum', enum: ItemStatus, default: ItemStatus.FAILED })
   status: ItemStatus;
 
   @Column({ nullable: true })
-  errorMessage: string;
+  errorMessage?: string;
 
   @Column({ nullable: true })
-  uploadedBy: string;
+  uploadedBy?: string;
 }

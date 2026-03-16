@@ -1,147 +1,256 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  forwardRef,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
+import Decimal from 'decimal.js';
+import * as QRCode from 'qrcode';
+
 import { Transaction } from '../entities/transaction.entity';
 import { QrPaymentDto } from './dto/qr-payment.dto';
 import { QrGenerateDto } from './dto/qr-generate.dto';
+
+import { CasService } from 'src/cas/cas.service';
+import { LedgerService } from 'src/ledger/ledger.service';
+import { AccountsService } from 'src/accounts/accounts.service';
+import { WalletService } from 'src/wallet/wallet.service';
+import { CustomerService } from 'src/customer/customer.service';
+import { PaymentsService } from '../payments.service';
+
+import { AliasType } from 'src/common/enums/alias.enums';
 import {
+  Currency,
   TransactionStatus,
   TransactionType,
 } from 'src/common/enums/transaction.enums';
-import * as QRCode from 'qrcode';
-import { CasService } from 'src/cas/cas.service';
-import { LedgerService } from 'src/ledger/ledger.service';
+
+type ParsedQrPayload = {
+  aliasType: AliasType;
+  aliasValue: string;
+  amount?: string;
+  currency?: Currency;
+  merchantName?: string;
+  reference?: string;
+};
+
+type ResolvedQrSource = {
+  sourceType: 'ACCOUNT' | 'WALLET';
+  customerId?: string;
+  senderAlias: string;
+  senderFinAddress: string;
+  sourceAccountId?: string | null;
+  sourceWalletId?: string | null;
+};
 
 @Injectable()
 export class QrService {
   constructor(
-    // Inject Transaction repository
     @InjectRepository(Transaction)
-    private txRepo: Repository<Transaction>,
+    private readonly txRepo: Repository<Transaction>,
 
-    // Inject Accounts service for ledger transfer
-    private ledgerService: LedgerService,
+    private readonly ledgerService: LedgerService,
+    private readonly cas: CasService,
+    private readonly accountsService: AccountsService,
 
-    // Inject CAS service for alias resolution
-    private cas: CasService,
-  ) {}
+    @Inject(forwardRef(() => WalletService))
+    private readonly walletService: WalletService,
 
-  // ================== decode ==================
-  // Decodes QR payload and resolves merchant via CAS
+    @Inject(forwardRef(() => CustomerService))
+    private readonly customerService: CustomerService,
+
+    private readonly paymentsService: PaymentsService,
+    private readonly dataSource: DataSource,
+  ) {
+    Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
+  }
+
   async decode(qrPayload: string) {
-    // Parse QR payload
     const parsedData = this.parseQrString(qrPayload);
 
-    // Validate alias information
     if (!parsedData.aliasType || !parsedData.aliasValue) {
       throw new BadRequestException('QR missing alias information');
     }
 
-    // Resolve merchant alias to financial address
     const merchant = await this.cas.resolveAlias(
       parsedData.aliasType,
       parsedData.aliasValue,
     );
 
     return {
-      merchantName: parsedData.merchantName,
+      merchantName: parsedData.merchantName || parsedData.aliasValue,
       merchantAccount: merchant.finAddress,
-      amount: parsedData.amount,
-      currency: parsedData.currency || 'SLE',
-      reference: parsedData.reference,
+      amount: parsedData.amount || null,
+      currency: parsedData.currency || Currency.SLE,
+      reference: parsedData.reference || null,
       qrPayload,
     };
   }
 
-  // ================== process ==================
-  // Processes QR payment transaction
   async process(participantId: string, dto: QrPaymentDto) {
-    // Parse QR payload
-    const parsedData = this.parseQrString(dto.qrPayload);
+    return this.dataSource.transaction('SERIALIZABLE', async (manager) => {
+      const parsedData = this.parseQrString(dto.qrPayload);
 
-    // Resolve merchant alias
-    const merchant = await this.cas.resolveAlias(
-      parsedData.aliasType,
-      parsedData.aliasValue,
-    );
+      const merchant = await this.cas.resolveAlias(
+        parsedData.aliasType,
+        parsedData.aliasValue,
+      );
 
-    // Determine final payment amount
-    const finalAmount = dto.amount || parsedData.amount;
-    if (!finalAmount || finalAmount <= 0) {
-      throw new BadRequestException('Payment amount required');
-    }
+      const source = await this.resolveSource(participantId, dto, manager);
 
-    // Determine currency
-    const currency = parsedData.currency || dto.currency;
-    if (!currency) {
-      throw new BadRequestException('Currency required');
-    }
+      if (source.senderFinAddress === merchant.finAddress) {
+        throw new BadRequestException('Sender and receiver cannot be same');
+      }
 
-    // Create transaction record
-    const tx = this.txRepo.create({
-      participantId,
-      channel: TransactionType.QR_PAYMENT,
-      senderAlias: dto.senderAlias,
-      senderFinAddress: dto.debtorAccount,
-      receiverFinAddress: merchant.finAddress,
-      receiverAlias: parsedData.aliasValue,
-      amount: finalAmount,
-      currency,
-      status: TransactionStatus.INITIATED,
-      reference: parsedData.reference || `QR Payment to ${merchant.finAddress}`,
-    });
+      const finalAmount = dto.amount || parsedData.amount;
+      if (!finalAmount) {
+        throw new BadRequestException('Payment amount required');
+      }
 
-    const savedTx = await this.txRepo.save(tx);
+      const amount = new Decimal(finalAmount);
+      if (amount.isNaN() || amount.lte(0)) {
+        throw new BadRequestException('Invalid payment amount');
+      }
 
-    try {
-      // Perform ledger transfer
-      await this.ledgerService.postTransfer({
-        txId: savedTx.txId,
-        reference: savedTx.reference ?? `QR-${savedTx.txId}`,
+      const currency = dto.currency || parsedData.currency || Currency.SLE;
+      if (currency !== Currency.SLE) {
+        throw new BadRequestException('Only SLE currency is supported');
+      }
+
+      if (dto.pin && source.sourceType === 'WALLET') {
+        const wallet = await this.walletService.getWallet(
+          source.sourceWalletId!,
+          participantId,
+        );
+
+        if (!wallet) {
+          throw new NotFoundException('Wallet not found');
+        }
+
+        await this.walletService.verifyPinWithLock(
+          wallet,
+          participantId,
+          dto.pin,
+        );
+      }
+
+      if (dto.pin && source.sourceType === 'ACCOUNT' && source.customerId) {
+        await this.customerService.verifyPin(
+          source.customerId,
+          participantId,
+          dto.pin,
+        );
+      }
+
+      await this.accountsService.assertFinAddressActive(
+        source.senderFinAddress,
+        manager,
+      );
+      await this.accountsService.assertFinAddressActive(
+        merchant.finAddress,
+        manager,
+      );
+
+      const tx = manager.getRepository(Transaction).create({
         participantId,
-        postedBy: 'system',
-        legs: [
-          {
-            finAddress: savedTx.senderFinAddress,
-            amount: String(savedTx.amount),
-            isCredit: false, // DEBIT — money leaving sender
-            memo: `QR payment to ${savedTx.receiverAlias}`,
-          },
-          {
-            finAddress: savedTx.receiverFinAddress,
-            amount: String(savedTx.amount),
-            isCredit: true, // CREDIT — money arriving at merchant
-            memo: `QR payment from ${savedTx.senderAlias}`,
-          },
-        ],
+        channel: TransactionType.QR_PAYMENT,
+        senderAlias: source.senderAlias,
+        senderFinAddress: source.senderFinAddress,
+        receiverFinAddress: merchant.finAddress,
+        receiverAlias: parsedData.aliasValue,
+        amount: Number(amount.toFixed(2)),
+        currency,
+        status: TransactionStatus.INITIATED,
+        reference:
+          dto.reference ||
+          parsedData.reference ||
+          `QR Payment to ${parsedData.aliasValue}`,
+        externalId:
+          dto.idempotencyKey || this.paymentsService.generateReference(),
       });
 
-      // Mark transaction completed
-      savedTx.status = TransactionStatus.COMPLETED;
+      const savedTx = await manager.getRepository(Transaction).save(tx);
 
-      return await this.txRepo.save(savedTx);
-    } catch (error) {
-      // Mark transaction failed on error
-      savedTx.status = TransactionStatus.FAILED;
-      await this.txRepo.save(savedTx);
-      throw error;
-    }
+      try {
+        const transferResult = await this.ledgerService.postTransfer(
+          {
+            txId: savedTx.txId,
+            idempotencyKey: dto.idempotencyKey,
+            reference: savedTx.reference ?? `QR-${savedTx.txId}`,
+            participantId,
+            postedBy: 'qr-service',
+            currency,
+            legs: [
+              {
+                finAddress: savedTx.senderFinAddress,
+                amount: amount.toFixed(2),
+                isCredit: false,
+                memo:
+                  dto.narration?.trim() ||
+                  `QR payment to ${savedTx.receiverAlias}`,
+              },
+              {
+                finAddress: savedTx.receiverFinAddress,
+                amount: amount.toFixed(2),
+                isCredit: true,
+                memo:
+                  dto.narration?.trim() ||
+                  `QR payment from ${savedTx.senderAlias}`,
+              },
+            ],
+          },
+          manager,
+        );
+
+        savedTx.status = TransactionStatus.COMPLETED;
+        await manager.getRepository(Transaction).save(savedTx);
+
+        const [senderBalance, receiverBalance] = await Promise.all([
+          this.ledgerService.getDerivedBalance(savedTx.senderFinAddress),
+          this.ledgerService.getDerivedBalance(savedTx.receiverFinAddress),
+        ]);
+
+        return {
+          status: 'success',
+          txId: savedTx.txId,
+          journalId: transferResult.journalId,
+          senderFinAddress: savedTx.senderFinAddress,
+          receiverFinAddress: savedTx.receiverFinAddress,
+          senderBalance,
+          receiverBalance,
+        };
+      } catch (error) {
+        savedTx.status = TransactionStatus.FAILED;
+        await manager.getRepository(Transaction).save(savedTx);
+        throw error;
+      }
+    });
   }
 
-  // ================== createQR ==================
-  // Generates QR code for merchant payments
   async createQR(dto: QrGenerateDto) {
-    // Construct QR payload
+    if (dto.currency && dto.currency !== Currency.SLE) {
+      throw new BadRequestException('Only SLE currency is supported');
+    }
+
+    if (dto.amount) {
+      const amount = new Decimal(dto.amount);
+      if (amount.isNaN() || amount.lte(0)) {
+        throw new BadRequestException('Invalid QR amount');
+      }
+    }
+
     const payload = JSON.stringify({
       aliasType: dto.aliasType,
       aliasValue: dto.aliasValue,
       amount: dto.amount,
-      currency: dto.currency,
+      currency: dto.currency || Currency.SLE,
       merchantName: dto.merchantName,
       reference: dto.reference,
     });
 
-    // Generate QR image
     const qrImage = await QRCode.toDataURL(payload);
 
     return {
@@ -151,12 +260,72 @@ export class QrService {
     };
   }
 
-  // ================== parseQrString ==================
-  // Parses QR payload string to JSON
-  private parseQrString(payload: string): any {
+  private async resolveSource(
+    participantId: string,
+    dto: QrPaymentDto,
+    manager: EntityManager,
+  ): Promise<ResolvedQrSource> {
+    if (dto.sourceType === 'WALLET') {
+      if (!dto.sourceWalletId) {
+        throw new BadRequestException(
+          'sourceWalletId is required for wallet source',
+        );
+      }
+
+      const wallet = await this.walletService.getWallet(
+        dto.sourceWalletId,
+        participantId,
+      );
+
+      if (!wallet) {
+        throw new NotFoundException('Wallet not found');
+      }
+
+      return {
+        sourceType: 'WALLET',
+        customerId: wallet.customerId,
+        senderAlias: dto.senderAlias || wallet.customerId,
+        senderFinAddress: wallet.finAddress,
+        sourceWalletId: wallet.walletId,
+        sourceAccountId: wallet.accountId,
+      };
+    }
+
+    if (dto.sourceFinAddress) {
+      await this.accountsService.assertFinAddressActive(
+        dto.sourceFinAddress,
+        manager,
+      );
+
+      return {
+        sourceType: 'ACCOUNT',
+        customerId: dto.customerId,
+        senderAlias: dto.senderAlias || dto.customerId || dto.sourceFinAddress,
+        senderFinAddress: dto.sourceFinAddress,
+        sourceAccountId: dto.sourceAccountId ?? null,
+      };
+    }
+
+    throw new BadRequestException(
+      'Provide sourceFinAddress for ACCOUNT source or sourceWalletId for WALLET source',
+    );
+  }
+
+  private parseQrString(payload: string): ParsedQrPayload {
     try {
-      return JSON.parse(payload);
-    } catch (e) {
+      const parsed: unknown = JSON.parse(payload);
+
+      if (
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        'aliasType' in parsed &&
+        'aliasValue' in parsed
+      ) {
+        return parsed as ParsedQrPayload;
+      }
+
+      throw new BadRequestException('Invalid QR payload');
+    } catch {
       throw new BadRequestException('Invalid QR Payload format');
     }
   }

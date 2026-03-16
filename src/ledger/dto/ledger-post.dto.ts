@@ -8,7 +8,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { Currency } from 'src/common/enums/transaction.enums';
-import { TransferLegDto } from './ledger-transfer.dto';
+import { LedgerTransferDto } from './ledger-transfer.dto';
 
 export class PostLedgerDto {
   @IsString()

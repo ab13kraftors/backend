@@ -1,50 +1,76 @@
-import {
-  Controller,
-  Post,
-  Get,
-  Delete,
-  Body,
-  Param,
-  UseGuards,
-  HttpCode,
-  HttpStatus,
-} from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { AccountsService } from './accounts.service';
 import { CreateAccountDto } from './dto/create-account.dto';
-import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
-import { ParticipantGuard } from 'src/common/guards/participant/participant.guard';
-import { Participant } from 'src/common/decorators/participant/participant.decorator';
+import { UpdateAccountStatusDto } from './dto/update-account-status.dto';
+import { AccountType } from './enums/account.enum';
+import { Currency } from 'src/common/enums/transaction.enums';
 
-@Controller('api/accounts')
-@UseGuards(JwtAuthGuard, ParticipantGuard)
+@Controller('accounts')
 export class AccountsController {
   constructor(private readonly accountsService: AccountsService) {}
 
-  @Post()
-  async create(
-    @Body() dto: CreateAccountDto,
-    @Participant() participantId: string,
-  ) {
-    return this.accountsService.create(participantId, dto);
+  @Post('customer-main')
+  async createCustomerMain(@Body() dto: CreateAccountDto) {
+    return this.accountsService.createCustomerMainAccount({
+      ...dto,
+      type: AccountType.CUSTOMER_MAIN,
+    });
   }
 
-  @Get('address/:finAddress')
+  @Post('wallet')
+  async createWallet(@Body() dto: CreateAccountDto) {
+    return this.accountsService.createWalletAccount({
+      ...dto,
+      type: AccountType.WALLET,
+    });
+  }
+
+  @Post('system')
+  async createSystem(
+    @Body()
+    body: {
+      participantId: string;
+      currency?: Currency;
+      finAddress?: string;
+    },
+  ) {
+    return this.accountsService.createSystemAccount(
+      body.participantId,
+      body.currency ?? Currency.SLE,
+      body.finAddress,
+    );
+  }
+
+  @Get(':accountId')
+  async getById(@Param('accountId') accountId: string) {
+    return this.accountsService.findById(accountId);
+  }
+
+  @Get('fin-address/:finAddress')
   async getByFinAddress(@Param('finAddress') finAddress: string) {
-    return this.accountsService.getByFinAddress(finAddress);
+    return this.accountsService.findByFinAddress(finAddress);
   }
 
-  @Get()
-  async getMyAccounts(@Participant() participantId: string) {
-    return this.accountsService.getAll(participantId);
+  @Get('customer/:customerId/main')
+  async getCustomerMain(@Param('customerId') customerId: string) {
+    return this.accountsService.findCustomerMainAccount(customerId);
   }
 
-  @Delete(':accountId')
-  @HttpCode(HttpStatus.OK)
-  async close(
+  @Get('wallet/:walletId')
+  async getWalletAccount(@Param('walletId') walletId: string) {
+    return this.accountsService.findWalletAccount(walletId);
+  }
+
+  @Get('system/default')
+  async getSystemAccount() {
+    return this.accountsService.getSystemAccount();
+  }
+
+  @Patch(':accountId/status')
+  async updateStatus(
     @Param('accountId') accountId: string,
-    @Participant() participantId: string,
+    @Body() dto: UpdateAccountStatusDto,
   ) {
-    await this.accountsService.close(accountId, participantId);
-    return { message: 'Account closed successfully' };
+    return this.accountsService.updateStatus(accountId, dto.status);
   }
 }

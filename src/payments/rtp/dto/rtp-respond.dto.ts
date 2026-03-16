@@ -1,15 +1,44 @@
-import { IsNotEmpty, IsString, IsUUID } from 'class-validator';
+import {
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Length,
+  Matches,
+} from 'class-validator';
 
 export class RespondRtpDto {
   @IsUUID()
   @IsNotEmpty()
   rtpMsgId: string;
 
+  @IsIn(['ACCOUNT', 'WALLET'])
+  sourceType: 'ACCOUNT' | 'WALLET';
+
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  debtorAccount: string; // The account they choose to pay from
+  sourceAccountId?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceWalletId?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceFinAddress?: string;
 
   @IsString()
   @IsNotEmpty()
-  pin: string; // For the "Payment Phase" authentication
+  customerId: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @Length(4, 6)
+  @Matches(/^\d{4,6}$/)
+  pin: string;
+
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
 }

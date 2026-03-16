@@ -1,48 +1,46 @@
-import { Body, Controller, Param, Post, Get } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { RtpService } from './rtp.service';
 import { RtpInitiateDto } from './dto/rtp-initiate.dto';
+import { RespondRtpDto } from './dto/rtp-respond.dto';
 import { Participant } from 'src/common/decorators/participant/participant.decorator';
+import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 
-@Controller('/api/switch/v1/rtp')
+@UseGuards(JwtAuthGuard)
+@Controller('/api/fp/payments/rtp')
 export class RtpController {
-  constructor(
-    // Inject RTP service
-    private readonly rtpService: RtpService,
-  ) {}
+  constructor(private readonly rtpService: RtpService) {}
 
-  // ================== create ==================
-  // Initiates a new Request-To-Pay
   @Post('initiate')
   create(@Body() dto: RtpInitiateDto, @Participant() participantId: string) {
     return this.rtpService.initiate(participantId, dto);
   }
 
-  // ================== accept ==================
-  // Approves RTP request and triggers payment
   @Post(':rtpMsgId/accept')
   accept(
     @Param('rtpMsgId') id: string,
-    @Body('debtorAccount') account: string,
-    @Body('pin') pin: string,
+    @Body() body: Omit<RespondRtpDto, 'rtpMsgId'>,
+    @Participant() participantId: string,
   ) {
-    return this.rtpService.approve({
+    return this.rtpService.approve(participantId, {
+      ...body,
       rtpMsgId: id,
-      debtorAccount: account,
-      pin,
     });
   }
 
-  // ================== reject ==================
-  // Rejects RTP request
   @Post(':rtpMsgId/reject')
-  reject(@Param('rtpMsgId') id: string) {
-    return this.rtpService.reject(id);
+  reject(
+    @Param('rtpMsgId') id: string,
+    @Body('reason') reason: string,
+    @Participant() participantId: string,
+  ) {
+    return this.rtpService.reject(participantId, id, reason);
   }
 
-  // ================== getPending ==================
-  // Returns pending RTP requests for a payer
   @Get('pending/:payerAlias')
-  getPending(@Param('payerAlias') payerAlias: string) {
-    return this.rtpService.findPendingByPayer(payerAlias);
+  getPending(
+    @Param('payerAlias') payerAlias: string,
+    @Participant() participantId: string,
+  ) {
+    return this.rtpService.findPendingByPayer(participantId, payerAlias);
   }
 }

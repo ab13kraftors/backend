@@ -15,8 +15,8 @@ import { Participant } from 'src/auth/entities/participant.entity';
     KycModule,
     ComplianceModule,
   ],
-  providers: [AccountsService],
   controllers: [AccountsController],
+  providers: [AccountsService],
   exports: [AccountsService, TypeOrmModule],
 })
 export class AccountsModule {}

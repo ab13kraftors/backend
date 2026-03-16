@@ -17,7 +17,7 @@ export const databaseConfig: TypeOrmModuleOptions = {
   port: 5432,
   username: 'cas_user',
   password: 'cas_password', // Hardcode temporarily to test
-  database: 'cas_db',
+  database: 'cas_db2',
   autoLoadEntities: true,
   synchronize: true,
   dropSchema: false,

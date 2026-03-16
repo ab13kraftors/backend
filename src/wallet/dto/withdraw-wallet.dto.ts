@@ -1,4 +1,4 @@
-import { IsString, Length, Matches } from 'class-validator';
+import { IsOptional, IsString, Length, Matches } from 'class-validator';
 
 export class WithdrawWalletDto {
   @IsString()
@@ -12,4 +12,12 @@ export class WithdrawWalletDto {
   @Length(6, 6)
   @Matches(/^\d{6}$/)
   pin: string;
+
+  @IsOptional()
+  @IsString()
+  destinationFinAddress?: string;
+
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
 }

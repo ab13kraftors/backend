@@ -1,13 +1,14 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { VerifyController } from './verify.controller';
 import { VerifyService } from './verify.service';
 import { CasModule } from 'src/cas/cas.module';
-import { AuthModule } from 'src/auth/auth.module';
-import { ParticipantGuard } from 'src/common/guards/participant/participant.guard';
+import { AccountsModule } from 'src/accounts/accounts.module';
+import { WalletModule } from 'src/wallet/wallet.module';
 
 @Module({
-  imports: [AuthModule, CasModule],
+  imports: [CasModule, AccountsModule, forwardRef(() => WalletModule)],
   controllers: [VerifyController],
-  providers: [VerifyService, ParticipantGuard],
+  providers: [VerifyService],
+  exports: [VerifyService],
 })
 export class VerifyModule {}

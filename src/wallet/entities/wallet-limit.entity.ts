@@ -4,14 +4,16 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  Index,
 } from 'typeorm';
 
 @Entity('wallet_limits')
+@Index(['walletId'], { unique: true })
 export class WalletLimit {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'uuid' })
   walletId: string;
 
   @Column({ type: 'decimal', precision: 18, scale: 2, default: '0' })
