@@ -9,6 +9,7 @@ import { LoanAdminController } from './loan-admin.controller';
 import { WalletModule } from '../wallet/wallet.module';
 import { LedgerModule } from '../ledger/ledger.module';
 import { KycModule } from '../kyc/kyc.module';
+import { AuthModule } from 'src/auth/auth.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { KycModule } from '../kyc/kyc.module';
     WalletModule,
     LedgerModule,
     KycModule,
+    AuthModule,
   ],
   providers: [LoanService],
   controllers: [LoanController, LoanAdminController],

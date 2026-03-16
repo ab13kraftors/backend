@@ -19,6 +19,6 @@ export const databaseConfig: TypeOrmModuleOptions = {
   password: 'cas_password', // Hardcode temporarily to test
   database: 'cas_db',
   autoLoadEntities: true,
-  synchronize: false,
+  synchronize: true,
   dropSchema: false,
 };

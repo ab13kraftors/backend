@@ -6,6 +6,7 @@ import {
   UseGuards,
   Get,
   Delete,
+  Request,
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { CardService } from './card.service';
@@ -15,7 +16,7 @@ import { Participant } from 'src/common/decorators/participant/participant.decor
 @Controller('/api/fp/cards')
 @UseGuards(JwtAuthGuard)
 export class CardController {
-  constructor(private cardService: CardService) {}
+  constructor(private readonly cardService: CardService) {}
 
   @Post(':ccuuid')
   addCard(
@@ -23,24 +24,32 @@ export class CardController {
     @Body() dto: AddCardDto,
     @Participant() participantId: string,
   ) {
-    // Fixed argument order to match Service
     return this.cardService.addCard(participantId, ccuuid, dto);
   }
 
   @Get(':ccuuid')
   listCards(
     @Param('ccuuid') ccuuid: string,
-    @Participant() participantId: string, // Added decorator
+    @Participant() participantId: string,
   ) {
-    // Fixed typo 'particiccuuid'
-    return this.cardService.listCards(participantId, ccuuid);
+    return this.cardService.getCards(participantId, ccuuid);
   }
 
   @Delete(':cardId')
   removeCard(
     @Param('cardId') cardId: string,
-    @Participant() participantId: string, // Added decorator for security
+    @Participant() participantId: string,
   ) {
     return this.cardService.removeCard(participantId, cardId);
+  }
+
+  @Post(':ccuuid/:cardId/charge')
+  chargeCard(
+    @Param('ccuuid') ccuuid: string,
+    @Param('cardId') cardId: string,
+    @Body('amount') amount: number,
+    @Participant() participantId: string,
+  ) {
+    return this.cardService.chargeCard(participantId, ccuuid, cardId, amount);
   }
 }

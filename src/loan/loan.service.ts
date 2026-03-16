@@ -22,14 +22,13 @@ import { LedgerService } from '../ledger/ledger.service';
 import { WalletService } from '../wallet/wallet.service';
 import { KycService } from '../kyc/kyc.service';
 import { KycTier } from 'src/common/enums/kyc.enums';
-
+import { SYSTEM_POOL } from 'src/common/constants';
 /**
- * SYSTEM_LOAN_POOL — the internal fin-address that acts as the source of
+ * SYSTEM_POOL — the internal fin-address that acts as the source of
  * disbursed funds and the sink for repayments.  This account must exist
  * as a seeded ledger posting (balance derived from postings, never a raw
  * column) before any loan can be disbursed.
  */
-export const SYSTEM_LOAN_POOL = 'SYSTEM_LOAN_POOL';
 
 @Injectable()
 export class LoanService {
@@ -185,7 +184,7 @@ export class LoanService {
               memo: `Loan repayment for ${loanId}`,
             },
             {
-              finAddress: SYSTEM_LOAN_POOL,
+              finAddress: SYSTEM_POOL,
               amount: repayAmount.toFixed(4),
               isCredit: true, // CREDIT — money arriving at pool
               memo: `Loan repayment from ${ccuuid}`,
@@ -301,7 +300,7 @@ export class LoanService {
    * Disburse an APPROVED loan into the customer's wallet.
    *
    * Ledger direction (inverted naming convention):
-   *   • SYSTEM_LOAN_POOL LOSES funds → isCredit: false  (DEBIT  pool)
+   *   • SYSTEM_POOL LOSES funds → isCredit: false  (DEBIT  pool)
    *   • Customer wallet GAINS funds  → isCredit: true (CREDIT wallet)
    */
   async disburseLoan(
@@ -336,7 +335,7 @@ export class LoanService {
           postedBy: adminId,
           legs: [
             {
-              finAddress: SYSTEM_LOAN_POOL,
+              finAddress: SYSTEM_POOL,
               amount: disbursementAmount.toFixed(4),
               isCredit: false, // DEBIT — money leaving the pool
               memo: `Disburse loan ${loanId} to ${loan.ccuuid}`,

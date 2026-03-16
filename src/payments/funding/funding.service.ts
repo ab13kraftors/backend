@@ -7,10 +7,11 @@ import { Wallet } from 'src/wallet/entities/wallet.entity';
 import { FundingWalletDto } from './dto/fund-wallet.dto';
 import { TransactionStatus } from 'src/common/enums/transaction.enums';
 import { LedgerService } from 'src/ledger/ledger.service';
+import { SYSTEM_POOL } from 'src/common/constants';
 
 @Injectable()
 export class FundingService {
-  private readonly SYSTEM_POOL_FIN = 'SYSTEM_INTERNAL';
+  private readonly SYSTEM_POOL_FIN = SYSTEM_POOL;
 
   constructor(
     @InjectRepository(FundingWallet)

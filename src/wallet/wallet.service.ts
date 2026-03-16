@@ -23,14 +23,14 @@ import { TransferWalletDto } from './dto/transfer-wallet.dto';
 import { AccountsService } from 'src/accounts/accounts.service';
 import { CustomerService } from 'src/customer/customer.service';
 import { LedgerService } from 'src/ledger/ledger.service';
-import { SYSTEM_POOL_FIN_ADDRESS } from 'src/common/constants';
+import { SYSTEM_POOL } from 'src/common/constants';
 import { WalletLimit } from './entities/wallet-limit.entity';
 import { KycService } from 'src/kyc/kyc.service';
 import { KycTier } from 'src/common/enums/kyc.enums';
 
 @Injectable()
 export class WalletService {
-  private readonly SYSTEM_POOL_FIN = SYSTEM_POOL_FIN_ADDRESS;
+  private readonly SYSTEM_POOL_FIN = SYSTEM_POOL;
 
   constructor(
     @InjectRepository(Wallet)

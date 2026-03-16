@@ -11,7 +11,7 @@ import { LedgerService } from 'src/ledger/ledger.service';
 import { KycService } from 'src/kyc/kyc.service';
 
 import { KycTier } from 'src/common/enums/kyc.enums';
-import { WITHDRAWAL_POOL_FIN_ADDRESS } from 'src/common/constants';
+import { SYSTEM_POOL } from 'src/common/constants';
 import {
   CardTransaction,
   TransactionType,
@@ -60,7 +60,7 @@ export class WithdrawService {
             },
 
             {
-              finAddress: WITHDRAWAL_POOL_FIN_ADDRESS,
+              finAddress: SYSTEM_POOL,
               amount: dto.amount,
               isCredit: true, // CREDIT — money ARRIVING at settlement pool
               memo: 'Withdrawal settlement',

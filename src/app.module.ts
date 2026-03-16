@@ -29,6 +29,8 @@ import { WithdrawModule } from './withdraw/withdraw.module';
 import { RolesGuard } from './common/guards/auth/roles.guard';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { LoanModule } from './loan/loan.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { SettingsModule } from './settings/settings.module';
 
 @Module({
   imports: [
@@ -62,6 +64,8 @@ import { LoanModule } from './loan/loan.module';
     LoadModule,
     WithdrawModule,
     LoanModule,
+    NotificationsModule,
+    SettingsModule,
   ],
   controllers: [AppController],
   providers: [

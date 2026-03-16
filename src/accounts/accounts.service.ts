@@ -7,7 +7,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, EntityManager } from 'typeorm';
+import { Repository, EntityManager, DataSource } from 'typeorm';
 import { Account, AccountStatus } from './entities/account.entity';
 import { CreateAccountDto } from './dto/create-account.dto';
 import { Currency } from 'src/common/enums/transaction.enums';
@@ -15,6 +15,7 @@ import { LedgerService } from 'src/ledger/ledger.service';
 import { KycService } from 'src/kyc/kyc.service';
 import { ComplianceService } from 'src/compliance/compliance.service';
 import Decimal from 'decimal.js';
+import { SYSTEM_POOL } from 'src/common/constants';
 
 @Injectable()
 export class AccountsService {
@@ -26,7 +27,8 @@ export class AccountsService {
     private ledgerService: LedgerService,
 
     private kycService: KycService,
-    private complianceService: ComplianceService, // BSL audit
+    private complianceService: ComplianceService,
+    private dataSource: DataSource,
   ) {}
 
   /**
@@ -137,21 +139,40 @@ export class AccountsService {
   /**
    * Called at startup - ensure system accounts exist
    */
+  // temporary test version
   async ensureSystemAccounts() {
-    const systemFin = 'SYSTEM_INTERNAL';
+    const fin = SYSTEM_POOL;
+    const bankId = 'BANK_SL_001';
 
-    let systemAcc = await this.accountRepo.findOne({
-      where: { finAddress: systemFin },
-    });
+    let acc = await this.accountRepo.findOne({ where: { finAddress: fin } });
 
-    if (!systemAcc) {
-      systemAcc = this.accountRepo.create({
-        finAddress: systemFin,
-        participantId: 'SYSTEM',
+    if (!acc) {
+      console.log(`Creating account ${fin}`);
+      acc = await this.create(bankId, {
+        finAddress: fin,
         currency: Currency.SLE,
-        status: AccountStatus.ACTIVE,
       });
-      await this.accountRepo.save(systemAcc);
+    }
+
+    // Force simple credit
+    try {
+      await this.ledgerService.postTransfer({
+        txId: `FORCE-SEED-${fin}-${Date.now()}`,
+        reference: 'Force seed credit',
+        participantId: bankId,
+        postedBy: 'system-debug',
+        legs: [
+          {
+            finAddress: fin,
+            amount: '500000', // smaller number to test
+            isCredit: true,
+            memo: 'Debug seed',
+          },
+        ],
+      });
+      console.log(`→ Credit posted to ${fin}`);
+    } catch (e) {
+      console.error(`Credit failed for ${fin}:`, e.message || e);
     }
   }
 }

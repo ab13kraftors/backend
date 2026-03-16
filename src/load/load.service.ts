@@ -17,7 +17,7 @@ import {
   TransactionType,
 } from 'src/common/enums/transaction.enums';
 import { WalletStatus } from 'src/common/enums/banking.enums';
-import { CARD_GATEWAY_POOL_FIN_ADDRESS, TX_PREFIX } from 'src/common/constants';
+import { SYSTEM_POOL, TX_PREFIX } from 'src/common/constants';
 
 @Injectable()
 export class LoadService {
@@ -109,7 +109,7 @@ export class LoadService {
             postedBy: 'load-service',
             legs: [
               {
-                finAddress: CARD_GATEWAY_POOL_FIN_ADDRESS, // System Liability Account
+                finAddress: SYSTEM_POOL, // System Liability Account
                 amount: dto.amount,
                 isCredit: false, // DEBIT — money LEAVING the gateway pool
                 memo: 'Gateway disbursement to wallet',
