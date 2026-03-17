@@ -33,6 +33,7 @@ import { LedgerService } from 'src/ledger/ledger.service';
 import { KycService } from 'src/kyc/kyc.service';
 import { KycTier } from 'src/common/enums/kyc.enums';
 import { SYSTEM_POOL } from 'src/common/constants';
+import { CreateAccountDto } from 'src/accounts/dto/create-account.dto';
 
 @Injectable()
 export class WalletService {
@@ -82,11 +83,11 @@ export class WalletService {
         customerId: dto.customerId,
         participantId,
         finAddress,
-        accountId: null,
+        accountId: undefined,
         currency: Currency.SLE,
         pinAttempts: 0,
         status: WalletStatus.ACTIVE,
-      });
+      } as Partial<Wallet>);
 
       const savedWallet = await walletRepository.save(wallet);
 
@@ -102,7 +103,7 @@ export class WalletService {
             walletId: savedWallet.walletId,
             customerId: dto.customerId,
           },
-        } as any,
+        } as CreateAccountDto,
         txManager,
       );
 
@@ -189,8 +190,11 @@ export class WalletService {
   async getBalance(walletId: string, participantId: string) {
     const wallet = await this.validateActiveWallet(walletId, participantId);
 
+    const account = await this.resolveWalletAccount(wallet);
+
     const balance = await this.ledgerService.getDerivedBalance(
-      wallet.finAddress,
+      account.finAddress,
+      participantId,
     );
 
     return {
@@ -218,8 +222,13 @@ export class WalletService {
 
   async fundWallet(dto: FundWalletDto, participantId: string) {
     const wallet = await this.validateActiveWallet(dto.walletId, participantId);
+    const walletAccount = await this.resolveWalletAccount(wallet);
 
-    await this.kycService.requireTier(wallet.customerId, KycTier.SOFT_APPROVED);
+    await this.kycService.requireTier(
+      wallet.customerId,
+      participantId,
+      KycTier.SOFT_APPROVED,
+    );
     await this.verifyPinWithLock(wallet, participantId, dto.pin);
 
     const amount = new Decimal(dto.amount);
@@ -238,7 +247,7 @@ export class WalletService {
         manager,
       );
       await this.accountsService.assertFinAddressActive(
-        wallet.finAddress,
+        walletAccount.finAddress,
         manager,
       );
 
@@ -258,7 +267,7 @@ export class WalletService {
               memo: `Wallet funding source -> ${wallet.finAddress}`,
             },
             {
-              finAddress: wallet.finAddress,
+              finAddress: walletAccount.finAddress,
               amount: amountStr,
               isCredit: true,
               memo: `Wallet funded from ${sourceFinAddress}`,
@@ -271,6 +280,7 @@ export class WalletService {
       if (transferResult.status === 'already_processed') {
         const newBalance = await this.ledgerService.getDerivedBalance(
           wallet.finAddress,
+          participantId,
         );
         return {
           status: 'success',
@@ -297,6 +307,7 @@ export class WalletService {
 
       const newBalance = await this.ledgerService.getDerivedBalance(
         wallet.finAddress,
+        participantId,
       );
 
       return {
@@ -310,8 +321,13 @@ export class WalletService {
 
   async withdrawWallet(dto: WithdrawWalletDto, participantId: string) {
     const wallet = await this.validateActiveWallet(dto.walletId, participantId);
+    const walletAccount = await this.resolveWalletAccount(wallet);
 
-    await this.kycService.requireTier(wallet.customerId, KycTier.HARD_APPROVED);
+    await this.kycService.requireTier(
+      wallet.customerId,
+      participantId,
+      KycTier.HARD_APPROVED,
+    );
     await this.verifyPinWithLock(wallet, participantId, dto.pin);
 
     const amount = new Decimal(dto.amount);
@@ -326,7 +342,7 @@ export class WalletService {
 
     return this.dataSource.transaction('SERIALIZABLE', async (manager) => {
       await this.accountsService.assertFinAddressActive(
-        wallet.finAddress,
+        walletAccount.finAddress,
         manager,
       );
       await this.accountsService.assertFinAddressActive(
@@ -344,7 +360,7 @@ export class WalletService {
           currency: wallet.currency,
           legs: [
             {
-              finAddress: wallet.finAddress,
+              finAddress: walletAccount.finAddress,
               amount: amountStr,
               isCredit: false,
               memo: `Wallet withdrawal -> ${destinationFinAddress}`,
@@ -363,6 +379,7 @@ export class WalletService {
       if (transferResult.status === 'already_processed') {
         const newBalance = await this.ledgerService.getDerivedBalance(
           wallet.finAddress,
+          participantId,
         );
         return {
           status: 'success',
@@ -389,6 +406,7 @@ export class WalletService {
 
       const newBalance = await this.ledgerService.getDerivedBalance(
         wallet.finAddress,
+        participantId,
       );
 
       return {
@@ -405,9 +423,12 @@ export class WalletService {
       dto.senderWalletId,
       participantId,
     );
-    await this.verifyPinWithLock(sender, participantId, dto.pin);
-
     const receiver = await this.getWalletByFinAddress(dto.receiverFinAddress);
+
+    const senderAccount = await this.resolveWalletAccount(sender);
+    const receiverAccount = await this.resolveWalletAccount(receiver);
+
+    await this.verifyPinWithLock(sender, participantId, dto.pin);
 
     if (sender.walletId === receiver.walletId) {
       throw new BadRequestException('Cannot send to yourself');
@@ -421,11 +442,13 @@ export class WalletService {
     if (amount.gt(5000)) {
       await this.kycService.requireTier(
         sender.customerId,
+        participantId,
         KycTier.HARD_APPROVED,
       );
     } else {
       await this.kycService.requireTier(
         sender.customerId,
+        participantId,
         KycTier.SOFT_APPROVED,
       );
     }
@@ -435,11 +458,11 @@ export class WalletService {
 
     return this.dataSource.transaction('SERIALIZABLE', async (manager) => {
       await this.accountsService.assertFinAddressActive(
-        sender.finAddress,
+        senderAccount.finAddress,
         manager,
       );
       await this.accountsService.assertFinAddressActive(
-        receiver.finAddress,
+        receiverAccount.finAddress,
         manager,
       );
 
@@ -450,7 +473,7 @@ export class WalletService {
       if (senderLimit) {
         const dailySent = await this.calculateDailySent(
           manager,
-          sender.finAddress,
+          senderAccount.finAddress,
         );
         const newDailySent = new Decimal(dailySent).add(amount);
 
@@ -493,13 +516,13 @@ export class WalletService {
           currency: sender.currency,
           legs: [
             {
-              finAddress: sender.finAddress,
+              finAddress: senderAccount.finAddress,
               amount: amountStr,
               isCredit: false,
               memo: `Wallet transfer to ${receiver.finAddress}`,
             },
             {
-              finAddress: receiver.finAddress,
+              finAddress: receiverAccount.finAddress,
               amount: amountStr,
               isCredit: true,
               memo: `Wallet transfer from ${sender.finAddress}`,
@@ -511,10 +534,8 @@ export class WalletService {
 
       if (transferResult.status === 'already_processed') {
         const senderNewBalance = await this.ledgerService.getDerivedBalance(
-          sender.finAddress,
-        );
-        const receiverNewBalance = await this.ledgerService.getDerivedBalance(
-          receiver.finAddress,
+          senderAccount.finAddress,
+          participantId,
         );
 
         return {
@@ -522,7 +543,6 @@ export class WalletService {
           journalId: transferResult.journalId,
           txId: transferResult.txId,
           senderNewBalance,
-          receiverNewBalance,
         };
       }
 
@@ -542,10 +562,8 @@ export class WalletService {
       );
 
       const senderNewBalance = await this.ledgerService.getDerivedBalance(
-        sender.finAddress,
-      );
-      const receiverNewBalance = await this.ledgerService.getDerivedBalance(
-        receiver.finAddress,
+        senderAccount.finAddress,
+        participantId,
       );
 
       return {
@@ -553,7 +571,6 @@ export class WalletService {
         journalId: transferResult.journalId,
         txId,
         senderNewBalance,
-        receiverNewBalance,
       };
     });
   }
@@ -657,6 +674,12 @@ export class WalletService {
     }
 
     return wallet;
+  }
+
+  private async resolveWalletAccount(wallet: Wallet, manager?: EntityManager) {
+    if (!wallet.accountId)
+      throw new NotFoundException('Wallet account missing');
+    return this.accountsService.findById(wallet.accountId, manager);
   }
 
   private async calculateDailySent(

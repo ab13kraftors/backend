@@ -13,6 +13,8 @@ import { Currency } from 'src/common/enums/transaction.enums';
 @Entity('ledger_postings')
 @Index('IDX_LEDGER_POSTING_ACCOUNT_ID', ['accountId'])
 @Index('IDX_LEDGER_POSTING_JOURNAL_ID', ['journalId'])
+@Index(['accountId', 'side'])
+@Index(['journalId', 'accountId'])
 export class LedgerPosting {
   @PrimaryGeneratedColumn('uuid')
   postingId: string;

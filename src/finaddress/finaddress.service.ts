@@ -7,141 +7,130 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { FinAddress } from './entities/finaddress.entity';
 import { Repository } from 'typeorm';
 import { CustomerService } from 'src/customer/customer.service';
-import { CreateFinAddressDto } from './entities/dto/create-finaddress.dto';
+import { CreateFinAddressDto } from './dto/create-finaddress.dto';
 import { Alias } from 'src/alias/entities/alias.entity';
 import { AliasStatus, AliasType } from 'src/common/enums/alias.enums';
 
 @Injectable()
 export class FinaddressService {
   constructor(
-    // Inject FinAddress repository
     @InjectRepository(FinAddress)
     private readonly finaRepo: Repository<FinAddress>,
 
-    // Inject Customer service for validation
     private readonly customerService: CustomerService,
 
-    // Inject Alias repository
     @InjectRepository(Alias)
     private readonly aliasRepo: Repository<Alias>,
   ) {}
 
-  // ================== create ==================
-  // Creates a financial address for a customer
+  // ================= CREATE =================
   async create(
     participantId: string,
-    ccuuid: string,
+    customerId: string,
     dto: CreateFinAddressDto,
   ) {
-    // Ensure customer exists
-    await this.customerService.findOne(ccuuid, participantId);
+    await this.customerService.findOne(customerId, participantId);
 
-    // Count existing fin addresses
     const existing = await this.finaRepo.count({
-      where: { participantId, ccuuid },
+      where: { participantId, customerId },
     });
 
-    // First address becomes default automatically
     const entity = this.finaRepo.create({
       ...dto,
       participantId,
-      ccuuid,
+      customerId,
       isDefault: existing === 0,
     });
 
     return this.finaRepo.save(entity);
   }
 
-  // ================== findAll ==================
-  // Returns paginated list of financial addresses
+  // ================= FIND ALL =================
   async findAll(
     participantId: string,
-    ccuuid: string,
+    customerId: string,
     pageNo = 0,
     pageSize = 10,
   ) {
     const [results, total] = await this.finaRepo.findAndCount({
-      where: { participantId, ccuuid },
+      where: { participantId, customerId },
       skip: pageNo * pageSize,
       take: pageSize,
       order: { createdAt: 'DESC' },
     });
 
-    // Throw error if no records found
     if (total === 0) {
-      throw new NotFoundException('No customer exists or No fin records found');
+      throw new NotFoundException('No fin addresses found');
     }
 
     return results;
   }
 
-  // ================== setDefault ==================
-  // Sets a financial address as default
-  async setDefault(participantId: string, ccuuid: string, finUuid: string) {
+  // ================= SET DEFAULT =================
+  async setDefault(
+    participantId: string,
+    customerId: string,
+    finAddressId: string,
+  ) {
     const fin = await this.finaRepo.findOne({
-      where: { finUuid, participantId, ccuuid },
+      where: { finAddressId, participantId, customerId },
     });
 
     if (!fin) throw new NotFoundException('Financial address not found');
 
-    // Remove existing default flag
     await this.finaRepo.update(
-      {
-        participantId,
-        ccuuid,
-        isDefault: true,
-      },
+      { participantId, customerId, isDefault: true },
       { isDefault: false },
     );
 
-    // Mark selected address as default
     fin.isDefault = true;
 
     return this.finaRepo.save(fin);
   }
 
-  // ================== remove ==================
-  // Deletes a financial address
-  async remove(participantId: string, ccuuid: string, finUuid: string) {
+  // ================= REMOVE =================
+  async remove(
+    participantId: string,
+    customerId: string,
+    finAddressId: string,
+  ) {
     const fin = await this.finaRepo.findOne({
-      where: { finUuid, participantId, ccuuid },
+      where: { finAddressId, participantId, customerId },
     });
 
-    if (!fin) throw new NotFoundException('Financial addess not found');
+    if (!fin) throw new NotFoundException('Financial address not found');
 
-    // Prevent deletion of default address
     if (fin.isDefault) {
-      throw new BadRequestException('Cannot delete default financial address');
-    }
-
-    return this.finaRepo.delete({ finUuid });
-  }
-
-  // ================== resolveAlias ==================
-  // Resolves alias to default financial address
-  async resolveAlias(aliasType: AliasType, aliasValue: string) {
-    const result = await this.aliasRepo
-      .createQueryBuilder('alias')
-      .innerJoin(FinAddress, 'fin', 'fin.ccuuid = alias.ccuuid')
-      .where('alias.type = :type', { type: aliasType })
-      .andWhere('alias.value = :value', { value: aliasValue })
-      .andWhere('alias.status = :status', { status: AliasStatus.ACTIVE })
-      .andWhere('fin.isDefault = :isDefault', { isDefault: true })
-      .select(['fin.finAddress', 'fin.servicerId', 'fin.type'])
-      .getRawOne(); // returns raw result
-
-    // Throw error if alias mapping not found
-    if (!result) {
-      throw new NotFoundException(
-        `Active account for ${aliasType}: ${aliasValue} not found`,
+      throw new BadRequestException(
+        'Cannot delete default financial address',
       );
     }
 
-    // Return resolved financial routing details
-    return {
-      finAddress: result.fin_finAddress,
-      servicerId: result.fin_servicerId,
-      type: result.fin_type,
-    };
+    return this.finaRepo.delete({ finAddressId });
+  }
+
+  // ================= RESOLVE ALIAS =================
+  async resolveAlias(aliasType: AliasType, aliasValue: string) {
+    const result = await this.aliasRepo
+      .createQueryBuilder('alias')
+      .innerJoin(FinAddress, 'fin', 'fin.customerId = alias.customerId')
+      .where('alias.type = :type', { type: aliasType })
+      .andWhere('alias.value = :value', { value: aliasValue })
+      .andWhere('alias.status = :status', {
+        status: AliasStatus.ACTIVE,
+      })
+      .andWhere('fin.isDefault = true')
+      .select([
+        'fin.finAddress as finAddress',
+        'fin.servicerId as servicerId',
+        'fin.type as type',
+      ])
+      .getRawOne();
+
+    if (!result) {
+      throw new NotFoundException('Alias not resolved');
+    }
+
+    return result;
   }
 }

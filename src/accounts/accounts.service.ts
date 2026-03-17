@@ -30,6 +30,10 @@ export class AccountsService {
       throw new BadRequestException('customerId is required');
     }
 
+    if (!dto.finAddress) {
+      throw new BadRequestException('finAddress is required');
+    }
+
     if (dto.type !== AccountType.CUSTOMER_MAIN) {
       throw new BadRequestException('type must be CUSTOMER_MAIN');
     }
@@ -71,6 +75,10 @@ export class AccountsService {
   ): Promise<Account> {
     if (!dto.customerId) {
       throw new BadRequestException('customerId is required');
+    }
+
+    if (!dto.finAddress) {
+      throw new BadRequestException('finAddress is required');
     }
 
     if (!dto.walletId) {
@@ -118,6 +126,9 @@ export class AccountsService {
     finAddress?: string,
     manager?: EntityManager,
   ): Promise<Account> {
+    if (!finAddress) {
+      throw new BadRequestException('finAddress required for system account');
+    }
     const repo = this.getRepo(manager);
 
     const existing = await repo.findOne({
@@ -170,11 +181,15 @@ export class AccountsService {
     );
   }
 
-  async findById(accountId: string, manager?: EntityManager): Promise<Account> {
+  async findById(
+    accountId: string,
+    participantId: string,
+    manager?: EntityManager,
+  ): Promise<Account> {
     const repo = this.getRepo(manager);
 
     const account = await repo.findOne({
-      where: { accountId },
+      where: { accountId, participantId },
     });
 
     if (!account) {
@@ -261,6 +276,29 @@ export class AccountsService {
 
     if (!account) {
       throw new NotFoundException('System account not found');
+    }
+
+    return account;
+  }
+
+  async getDefaultCustomerAccount(
+    customerId: string,
+    participantId: string,
+    manager?: EntityManager,
+  ): Promise<Account> {
+    const repo = this.getRepo(manager);
+
+    const account = await repo.findOne({
+      where: {
+        customerId,
+        participantId,
+        type: AccountType.CUSTOMER_MAIN,
+        isDefault: true,
+      },
+    });
+
+    if (!account) {
+      throw new NotFoundException('Default account not found');
     }
 
     return account;

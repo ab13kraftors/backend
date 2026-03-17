@@ -50,3 +50,11 @@ export class Notification {
   @CreateDateColumn()
   createdAt: Date;
 }
+
+/*
+@Column({nullable: true})
+customerId?: string;    // add tracing
+
+@Column({nullable: true})
+referenceId?: string;   // for otpId/txId/mfaId
+*/

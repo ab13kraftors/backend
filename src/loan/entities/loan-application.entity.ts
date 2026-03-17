@@ -9,14 +9,14 @@ import {
 import { LoanStatus } from 'src/common/enums/loan.enums';
 
 @Entity('loan_applications')
-@Index(['ccuuid', 'status'])
+@Index(['customerId', 'status'])
 export class LoanApplication {
   @PrimaryGeneratedColumn('uuid')
   loanId: string;
 
   @Column()
   @Index()
-  ccuuid: string;
+  customerId: string;
 
   @Column()
   participantId: string;

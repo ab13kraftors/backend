@@ -1,208 +1,233 @@
 import {
-  BadRequestException,
   Injectable,
+  BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { Repository, DataSource } from 'typeorm';
 import Decimal from 'decimal.js';
+import * as crypto from 'crypto';
 
-import { FundingWallet } from './entities/funding.entity';
-import { Wallet } from 'src/wallet/entities/wallet.entity';
-import { Transaction } from '../entities/transaction.entity';
-
+import { Funding } from './entities/funding.entity';
 import { CreateFundingDto } from './dto/create-funding.dto';
-import {
-  Currency,
-  TransactionStatus,
-  TransactionType,
-} from 'src/common/enums/transaction.enums';
 
 import { LedgerService } from 'src/ledger/ledger.service';
 import { AccountsService } from 'src/accounts/accounts.service';
-import { PaymentsService } from '../payments.service';
+import { WalletService } from 'src/wallet/wallet.service';
 import { SYSTEM_POOL } from 'src/common/constants';
+import { TransactionStatus } from 'src/common/enums/transaction.enums';
 
 @Injectable()
 export class FundingService {
-  private readonly SYSTEM_POOL_FIN = SYSTEM_POOL;
-
   constructor(
-    @InjectRepository(FundingWallet)
-    private readonly fundingRepo: Repository<FundingWallet>,
+    @InjectRepository(Funding)
+    private repo: Repository<Funding>,
 
-    @InjectRepository(Wallet)
-    private readonly walletRepo: Repository<Wallet>,
-
-    @InjectRepository(Transaction)
-    private readonly txRepo: Repository<Transaction>,
-
-    private readonly ledgerService: LedgerService,
-    private readonly accountsService: AccountsService,
-    private readonly paymentsService: PaymentsService,
-    private readonly dataSource: DataSource,
+    private ledger: LedgerService,
+    private accounts: AccountsService,
+    private walletService: WalletService,
+    private dataSource: DataSource,
   ) {
-    Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
+    Decimal.set({ precision: 20 });
   }
 
-  async fundingWallet(participantId: string, dto: CreateFundingDto) {
-    const wallet = await this.walletRepo.findOne({
-      where: { walletId: dto.walletId, participantId },
-    });
-
-    if (!wallet) {
-      throw new NotFoundException('Wallet does not exist or access denied');
-    }
-
-    if (dto.currency !== Currency.SLE) {
-      throw new BadRequestException('Only SLE funding is supported');
+  // ======================
+  // 🔵 TOPUP (CARD/BANK/MM)
+  // ======================
+  async topup(participantId: string, dto: CreateFundingDto) {
+    if (!dto.customerId) {
+      throw new BadRequestException('customerId is required');
     }
 
     const amount = new Decimal(dto.amount);
-    if (amount.isNaN() || amount.lte(0)) {
+    if (amount.lte(0)) {
       throw new BadRequestException('Invalid amount');
     }
 
-    const amountStr = amount.toFixed(2);
-    const sourceFinAddress =
-      dto.sourceFinAddress?.trim() || this.SYSTEM_POOL_FIN;
-    const destinationFinAddress = wallet.finAddress;
-    const ledgerTxId = this.paymentsService.generateReference('FUND');
+    return this.dataSource.transaction(async (manager) => {
+      // ✅ FIX 1: TYPE SAFE ACCOUNT
+      const account = dto.accountId
+        ? await this.accounts.findByIdForParticipant(
+            dto.accountId,
+            participantId,
+          )
+        : await this.accounts.findCustomerMainAccount(dto.customerId);
 
-    return this.dataSource.transaction('SERIALIZABLE', async (manager) => {
-      if (dto.idempotencyKey) {
-        const existing = await manager.getRepository(FundingWallet).findOne({
-          where: { idempotencyKey: dto.idempotencyKey },
-        });
-
-        if (existing) {
-          return existing;
-        }
+      if (!account) {
+        throw new NotFoundException('Account not found');
       }
 
-      await this.accountsService.assertFinAddressActive(
-        sourceFinAddress,
+      await this.accounts.assertFinAddressActive(account.finAddress, manager);
+
+      const source = dto.sourceFinAddress || SYSTEM_POOL;
+      const txId = crypto.randomUUID();
+
+      // 🔹 External → Account
+      const result = await this.ledger.postTransfer(
+        {
+          txId,
+          participantId,
+          reference: 'Funding Topup',
+          postedBy: 'funding',
+          currency: dto.currency,
+          legs: [
+            {
+              finAddress: source,
+              amount: amount.toFixed(2),
+              isCredit: false,
+            },
+            {
+              finAddress: account.finAddress,
+              amount: amount.toFixed(2),
+              isCredit: true,
+            },
+          ],
+        },
         manager,
       );
-      await this.accountsService.assertFinAddressActive(
-        destinationFinAddress,
-        manager,
-      );
 
-      const funding = manager.getRepository(FundingWallet).create({
-        walletId: wallet.walletId,
-        participantId,
-        customerId: wallet.customerId,
-        accountId: wallet.accountId ?? undefined,
-        sourceFinAddress,
-        destinationFinAddress,
-        method: dto.method,
-        amount: amountStr,
-        currency: dto.currency,
-        status: TransactionStatus.INITIATED,
-        externalReference:
-          dto.externalReference ||
-          this.paymentsService.generateExternalId('FUND'),
-        idempotencyKey: dto.idempotencyKey,
-        ledgerTxId,
-      });
+      // ✅ FIX 2: DECLARE OUTSIDE
+      let destinationFinAddress = account.finAddress;
+      let walletId: string | undefined = undefined;
 
-      const savedFunding = await manager
-        .getRepository(FundingWallet)
-        .save(funding);
+      // 🔹 Optional Account → Wallet
+      if (dto.walletId) {
+        const wallet = await this.walletService.getWallet(
+          dto.walletId,
+          participantId,
+        );
 
-      try {
-        const transfer = await this.ledgerService.postTransfer(
+        if (!wallet) {
+          throw new NotFoundException('Wallet not found');
+        }
+
+        const walletAccount = await this.accounts.findWalletAccount(
+          wallet.walletId,
+        );
+
+        await this.ledger.postTransfer(
           {
-            txId: ledgerTxId,
-            idempotencyKey: dto.idempotencyKey,
-            reference: `Wallet funding ${wallet.walletId}`,
+            txId: crypto.randomUUID(),
             participantId,
-            postedBy: 'funding-service',
-            currency: wallet.currency,
+            reference: 'Wallet Load',
+            postedBy: 'funding',
+            currency: dto.currency,
             legs: [
               {
-                finAddress: sourceFinAddress,
-                amount: amountStr,
+                finAddress: account.finAddress,
+                amount: amount.toFixed(2),
                 isCredit: false,
-                memo: `Wallet funding source -> ${destinationFinAddress}`,
               },
               {
-                finAddress: destinationFinAddress,
-                amount: amountStr,
+                finAddress: walletAccount.finAddress,
+                amount: amount.toFixed(2),
                 isCredit: true,
-                memo: `Wallet funded from ${sourceFinAddress}`,
               },
             ],
           },
           manager,
         );
 
-        savedFunding.status = TransactionStatus.COMPLETED;
-        savedFunding.journalId = transfer.journalId;
-
-        await manager.getRepository(FundingWallet).save(savedFunding);
-
-        await manager.getRepository(Transaction).save(
-          manager.getRepository(Transaction).create({
-            participantId,
-            customerId: wallet.customerId,
-            channel: TransactionType.CREDIT_TRANSFER,
-            senderAlias: sourceFinAddress,
-            receiverAlias: wallet.customerId,
-            senderFinAddress: sourceFinAddress,
-            receiverFinAddress: destinationFinAddress,
-            sourceType:
-              sourceFinAddress === this.SYSTEM_POOL_FIN ? 'ACCOUNT' : 'ACCOUNT',
-            destinationType: 'WALLET',
-            destinationWalletId: wallet.walletId,
-            destinationAccountId: wallet.accountId ?? undefined,
-            amount: amountStr,
-            currency: wallet.currency,
-            status: TransactionStatus.COMPLETED,
-            reference: savedFunding.externalReference,
-            externalId: this.paymentsService.generateExternalId('TXN'),
-            journalId: transfer.journalId,
-            narration: `Wallet funding ${wallet.walletId}`,
-          }),
-        );
-
-        return {
-          fundingId: savedFunding.fundingId,
-          walletId: savedFunding.walletId,
-          status: savedFunding.status,
-          amount: savedFunding.amount,
-          currency: savedFunding.currency,
-          journalId: savedFunding.journalId,
-          ledgerTxId: savedFunding.ledgerTxId,
-          externalReference: savedFunding.externalReference,
-        };
-      } catch (error: any) {
-        savedFunding.status = TransactionStatus.FAILED;
-        savedFunding.failureReason = error?.message || 'Wallet funding failed';
-
-        await manager.getRepository(FundingWallet).save(savedFunding);
-        throw error;
+        // ✅ FIX 3: STORE DESTINATION CORRECTLY
+        destinationFinAddress = walletAccount.finAddress;
+        walletId = wallet.walletId;
       }
+
+      return manager.getRepository(Funding).save(
+        manager.getRepository(Funding).create({
+          participantId,
+          customerId: account.customerId ?? '', // ✅ FIX 4 (avoid undefined)
+          accountId: account.accountId,
+          walletId,
+          sourceFinAddress: source,
+          destinationFinAddress,
+          amount: amount.toFixed(2),
+          currency: dto.currency,
+          method: dto.method,
+          status: TransactionStatus.COMPLETED,
+          journalId: result.journalId,
+          idempotencyKey: dto.idempotencyKey,
+        }),
+      );
+    });
+  }
+  // ======================
+  // 🔴 WITHDRAW (ONLY BANK)
+  // ======================
+  async withdraw(participantId: string, dto: CreateFundingDto) {
+    const amount = new Decimal(dto.amount);
+
+    if (!dto.accountId) {
+      throw new BadRequestException('accountId required for withdrawal');
+    }
+
+    if (!dto.destinationFinAddress) {
+      throw new BadRequestException('destinationFinAddress required');
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      const account = await this.accounts.findByIdForParticipant(
+        dto.accountId,
+        participantId,
+      );
+
+      if (!account) {
+        throw new NotFoundException('Account not found');
+      }
+
+      const txId = crypto.randomUUID();
+      await this.accounts.assertFinAddressActive(account.finAddress, manager);
+
+      const result = await this.ledger.postTransfer(
+        {
+          txId,
+          participantId,
+          reference: 'Withdraw',
+          postedBy: 'funding',
+          currency: dto.currency, // ✅ FIXED
+          legs: [
+            {
+              finAddress: account.finAddress,
+              amount: amount.toFixed(2),
+              isCredit: false,
+            },
+            {
+              finAddress: dto.destinationFinAddress,
+              amount: amount.toFixed(2),
+              isCredit: true,
+            },
+          ],
+        },
+        manager,
+      );
+
+      return manager.getRepository(Funding).save(
+        manager.getRepository(Funding).create({
+          participantId,
+          customerId: account.customerId,
+          accountId: account.accountId,
+          destinationFinAddress: dto.destinationFinAddress,
+          amount: amount.toFixed(2),
+          currency: dto.currency,
+          method: dto.method,
+          status: TransactionStatus.COMPLETED,
+          journalId: result.journalId,
+          idempotencyKey: dto.idempotencyKey,
+        }),
+      );
     });
   }
 
-  async findAll(participantId: string) {
-    return this.fundingRepo.find({
+  findAll(participantId: string) {
+    return this.repo.find({
       where: { participantId },
       order: { createdAt: 'DESC' },
     });
   }
 
-  async findOne(participantId: string, fundingId: string) {
-    const funding = await this.fundingRepo.findOne({
+  findOne(participantId: string, fundingId: string) {
+    return this.repo.findOne({
       where: { fundingId, participantId },
     });
-
-    if (!funding) {
-      throw new NotFoundException('Funding record not found');
-    }
-
-    return funding;
   }
 }

@@ -31,6 +31,7 @@ import { LoanModule } from './loan/loan.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SettingsModule } from './settings/settings.module';
 import { PaymentInstrumentsModule } from './payment-instruments/payment-instruments.module';
+import { LimitsRiskModule } from './limits-risk/limits-risk.module';
 
 @Module({
   imports: [
@@ -66,6 +67,7 @@ import { PaymentInstrumentsModule } from './payment-instruments/payment-instrume
     NotificationsModule,
     SettingsModule,
     PaymentInstrumentsModule,
+    LimitsRiskModule,
   ],
   controllers: [AppController],
   providers: [

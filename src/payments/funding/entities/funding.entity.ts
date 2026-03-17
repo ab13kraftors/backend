@@ -1,36 +1,35 @@
-import { FundMethod } from 'src/common/enums/bulk.enums';
-import {
-  Currency,
-  TransactionStatus,
-} from 'src/common/enums/transaction.enums';
 import {
   Column,
   CreateDateColumn,
   Entity,
-  Index,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
+  Index,
 } from 'typeorm';
+import {
+  Currency,
+  TransactionStatus,
+} from 'src/common/enums/transaction.enums';
+import { FundMethod } from 'src/common/enums/bulk.enums';
 
-@Entity('wallet_funding')
-@Index(['participantId', 'walletId', 'createdAt'])
-@Index(['participantId', 'status', 'createdAt'])
+@Entity('funding')
+@Index(['participantId', 'customerId'])
 @Index(['idempotencyKey'], { unique: true })
-export class FundingWallet {
+export class Funding {
   @PrimaryGeneratedColumn('uuid')
   fundingId: string;
 
   @Column()
-  walletId: string;
-
-  @Column()
   participantId: string;
 
-  @Column({ nullable: true })
-  customerId?: string;
+  @Column()
+  customerId: string;
 
   @Column({ nullable: true })
   accountId?: string;
+
+  @Column({ nullable: true })
+  walletId?: string;
 
   @Column({ nullable: true })
   sourceFinAddress?: string;
@@ -38,13 +37,13 @@ export class FundingWallet {
   @Column({ nullable: true })
   destinationFinAddress?: string;
 
-  @Column({ type: 'enum', enum: FundMethod, default: FundMethod.CARD })
+  @Column({ type: 'enum', enum: FundMethod })
   method: FundMethod;
 
   @Column({ type: 'decimal', precision: 18, scale: 2 })
   amount: string;
 
-  @Column({ type: 'enum', enum: Currency, default: Currency.SLE })
+  @Column({ type: 'enum', enum: Currency })
   currency: Currency;
 
   @Column({
@@ -54,20 +53,11 @@ export class FundingWallet {
   })
   status: TransactionStatus;
 
-  @Column({ nullable: true, unique: true })
-  externalReference?: string;
-
-  @Column({ nullable: true, unique: true })
-  idempotencyKey?: string;
-
-  @Column({ nullable: true })
-  ledgerTxId?: string;
-
   @Column({ nullable: true })
   journalId?: string;
 
   @Column({ nullable: true })
-  failureReason?: string;
+  idempotencyKey?: string;
 
   @CreateDateColumn()
   createdAt: Date;

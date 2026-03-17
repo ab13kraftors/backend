@@ -7,6 +7,7 @@ import {
 } from 'typeorm';
 
 @Entity('loan_repayments')
+@Index(['loanId', 'customerId'])
 export class LoanRepayment {
   @PrimaryGeneratedColumn('uuid')
   repaymentId: string;
@@ -16,7 +17,10 @@ export class LoanRepayment {
   loanId: string;
 
   @Column()
-  ccuuid: string;
+  customerId: string;
+
+  @Column()
+  participantId: string;
 
   @Column({ type: 'decimal', precision: 18, scale: 4 })
   amount: string;

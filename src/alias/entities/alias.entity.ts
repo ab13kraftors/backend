@@ -7,43 +7,38 @@ import {
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
+  Index,
 } from 'typeorm';
 
-@Entity()
+@Entity('aliases')
+@Index(['participantId', 'type', 'value'], { unique: true })
 export class Alias {
   @PrimaryGeneratedColumn('uuid')
-  aliasUuid: string;
+  aliasId: string;
 
   @Column()
   participantId: string;
 
+  @Column()
+  customerId: string;
+
   @ManyToOne(() => Customer, (customer) => customer.aliases, {
     onDelete: 'CASCADE',
-    nullable: false, // Cannot create without a customer
   })
-  @JoinColumn({ name: 'ccuuid', referencedColumnName: 'uuid' })
+  @JoinColumn({ name: 'customerId' })
   customer: Customer;
 
-  @Column()
-  ccuuid: string;
-
-  @Column({ type: 'enum', enum: AliasType, default: AliasType.EMAIL_ADDRESS })
+  @Column({ type: 'enum', enum: AliasType })
   type: AliasType;
 
   @Column()
   value: string;
 
   @Column({ type: 'enum', enum: AliasStatus, default: AliasStatus.ACTIVE })
-  status: string;
+  status: AliasStatus;
 
-  @Column({ default: false })
-  isOwner: boolean;
-
-  @Column({ type: 'timestamp', nullable: true })
-  startDate?: Date;
-
-  @Column({ type: 'timestamp', nullable: true })
-  expireDate?: Date;
+  @Column({ default: true })
+  isPrimary: boolean;
 
   @CreateDateColumn()
   createdAt: Date;

@@ -5,25 +5,30 @@ import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { CreateFundingDto } from './dto/create-funding.dto';
 
 @UseGuards(JwtAuthGuard)
-@Controller('api/fp/wallet/funding')
+@Controller('api/fp/funding')
 export class FundingController {
   constructor(private readonly fundingService: FundingService) {}
 
-  @Post('initiate')
-  async fundingWallet(
+  @Post('topup')
+  topup(@Body() dto: CreateFundingDto, @Participant() participantId: string) {
+    return this.fundingService.topup(participantId, dto);
+  }
+
+  @Post('withdraw')
+  withdraw(
     @Body() dto: CreateFundingDto,
     @Participant() participantId: string,
   ) {
-    return this.fundingService.fundingWallet(participantId, dto);
+    return this.fundingService.withdraw(participantId, dto);
   }
 
   @Get()
-  async findAll(@Participant() participantId: string) {
+  findAll(@Participant() participantId: string) {
     return this.fundingService.findAll(participantId);
   }
 
   @Get(':fundingId')
-  async findOne(
+  findOne(
     @Participant() participantId: string,
     @Param('fundingId') fundingId: string,
   ) {

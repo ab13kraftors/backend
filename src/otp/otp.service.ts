@@ -6,99 +6,128 @@ import { CustomerService } from 'src/customer/customer.service';
 import { CustomerStatus } from 'src/common/enums/customer.enums';
 import { CronExpression } from '@nestjs/schedule';
 import { Cron } from '@nestjs/schedule';
-import { SmsService } from 'src/common/sms/sms.service';
-import { EmailService } from 'src/common/email/email.service';
-import * as crypto from 'crypto'; 
-
+import * as crypto from 'crypto';
+import { NotificationsService } from 'src/notifications/notifications.service';
 @Injectable()
 export class OtpService {
-  // Logger for OTP operations
   private readonly logger = new Logger(OtpService.name);
 
   constructor(
-    // Inject OTP repository
     @InjectRepository(Otp)
     private readonly otpRepo: Repository<Otp>,
 
-    // Inject Customer service
     private readonly customerService: CustomerService,
-
-    private readonly smsService: SmsService,
-    private readonly emailService: EmailService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
-  // ================== generate ==================
-  // Generates OTP for customer verification
-  async generate(participantId: string, ccuuid: string) {
-    // Ensure customer exists
-    const customer = await this.customerService.findOne(ccuuid, participantId);
+  // ================= GENERATE =================
+  async generate(
+    participantId: string,
+    customerId: string,
+    purpose: string = 'REGISTER',
+  ) {
+    const customer = await this.customerService.findOne(
+      customerId,
+      participantId,
+    );
 
-    if (!customer.firstEmail) {
-      throw new BadRequestException(
-        'Customer does not have a registered email address.',
-      );
+    // RATE LIMIT (1 OTP / 30 sec)
+    const lastOtp = await this.otpRepo.findOne({
+      where: { customerId, participantId },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (lastOtp && Date.now() - lastOtp.createdAt.getTime() < 30000) {
+      throw new BadRequestException('Too many requests. Try after 30 seconds');
     }
 
-    // Remove any previous OTP
-    await this.otpRepo.delete({ participantId, ccuuid });
+    // delete previous OTPs
+    await this.otpRepo.delete({ customerId, participantId });
 
-    // Generate 6 digit OTP
     const otpCode = crypto.randomInt(100000, 999999).toString();
 
-    // Create OTP entity with 5 minute expiry
     const otp = this.otpRepo.create({
+      customerId,
       participantId,
-      ccuuid,
       otpCode,
+      purpose,
+      attempts: 0,
       expiresAt: new Date(Date.now() + 5 * 60 * 1000),
     });
 
-    const saved = await this.otpRepo.save(otp);
+    await this.otpRepo.save(otp);
 
-    // Deliver OTP to customer registered msisdn
-    // await this.smsService.sendOtp(customer.msisdn, otpCode);
-    // Deliver OTP to customer registered email instead of MSISDN
-    await this.emailService.sendOtp(customer.firstEmail, otpCode);
+    // send notification
+    if (customer.msisdn) {
+      await this.notificationsService.sendSms(
+        participantId,
+        customer.msisdn,
+        `Your OTP is ${otpCode}`,
+      );
+    }
 
-    // Never return otpCode in response
+    if (customer.firstEmail) {
+      await this.notificationsService.sendEmail(
+        participantId,
+        customer.firstEmail,
+        'OTP Verification',
+        `Your OTP is ${otpCode}`,
+      );
+    }
+
     return {
-      uuid: saved.uuid,
-      ccuuid: saved.ccuuid,
-      expiresAt: saved.expiresAt,
-      message: 'OTP sent to registered email/msisdn',
+      message: 'OTP sent',
+      expiresAt: otp.expiresAt,
     };
   }
 
-  // ================== complete ==================
-  // Verifies OTP and activates customer
-  async complete(participantId: string, ccuuid: string, otpCode: string) {
+  // ================= VERIFY =================
+  async verify(
+    participantId: string,
+    customerId: string,
+    otpCode: string,
+    purpose: string,
+  ) {
     const otp = await this.otpRepo.findOne({
-      where: {
-        participantId,
-        ccuuid,
-        otpCode,
-      },
+      where: { customerId, participantId, purpose },
     });
 
-    // Validate OTP existence
-    if (!otp) {
-      throw new BadRequestException('Invalid Otp');
-    }
+    if (!otp) throw new BadRequestException('OTP not found');
 
-    // Check OTP expiration
     if (otp.expiresAt < new Date()) {
-      await this.otpRepo.delete({ uuid: otp.uuid });
+      await this.otpRepo.delete({ otpId: otp.otpId });
       throw new BadRequestException('OTP expired');
     }
 
-    // Delete OTP after successful verification
-    await this.otpRepo.delete({ uuid: otp.uuid });
+    if (otp.attempts >= 5) {
+      throw new BadRequestException('Too many attempts');
+    }
 
-    // Activate customer
-    const customer = await this.customerService.findOne(ccuuid, participantId);
+    if (otp.otpCode !== otpCode) {
+      otp.attempts += 1;
+      await this.otpRepo.save(otp);
+      throw new BadRequestException('Invalid OTP');
+    }
+
+    await this.otpRepo.delete({ otpId: otp.otpId });
+
+    return { success: true };
+  }
+
+  // ================= COMPLETE (ACTIVATE) =================
+  async completeRegistration(
+    participantId: string,
+    customerId: string,
+    otpCode: string,
+  ) {
+    await this.verify(participantId, customerId, otpCode, 'REGISTER');
+
+    const customer = await this.customerService.findOne(
+      customerId,
+      participantId,
+    );
+
     customer.status = CustomerStatus.ACTIVE;
-
-    this.logger.log(`Customer/Company ${ccuuid} activated via OTP.`);
 
     return this.customerService.updateStatus(customer);
   }

@@ -55,8 +55,8 @@ export class Account {
   })
   status: AccountStatus;
 
-  @Column({ type: 'varchar', length: 255, nullable: true, unique: true })
-  finAddress: string | null;
+  @Column({ type: 'varchar', length: 255, unique: true })
+  finAddress: string;
 
   @Column({ type: 'boolean', default: false })
   isDefault: boolean;

@@ -1,0 +1,20 @@
+🔥 HOW YOU USE IT (IMPORTANT)
+
+Before transaction
+
+await limitsRiskService.check(
+  participantId,
+  customerId,
+  kycLevel,
+  amount,
+  'DEBIT',
+);
+
+After success
+
+await limitsRiskService.consume(
+  participantId,
+  customerId,
+  amount,
+  'DEBIT',
+);

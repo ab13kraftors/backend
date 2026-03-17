@@ -8,35 +8,36 @@ import {
   UpdateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { Customer } from 'src/customer/entities/customer.entity';
 
-@Entity()
-@Unique(['participantId', 'finAddress']) // prevents duplicate
+@Entity('fin_addresses')
+@Unique(['participantId', 'finAddress'])
+@Index(['participantId', 'customerId'])
 export class FinAddress {
   @PrimaryGeneratedColumn('uuid')
-  finUuid: string;
+  finAddressId: string;
 
   @Column()
   participantId: string;
 
+  @Column()
+  customerId: string;
+
   @ManyToOne(() => Customer, (customer) => customer.finAddresses, {
     onDelete: 'CASCADE',
-    nullable: false, // Cannot create without a customer
   })
-  @JoinColumn({ name: 'ccuuid', referencedColumnName: 'uuid' })
+  @JoinColumn({ name: 'customerId' })
   customer: Customer;
 
-  @Column()
-  ccuuid: string;
-
-  @Column({ type: 'enum', enum: Type, default: Type.BANK_ACCOUNT })
+  @Column({ type: 'enum', enum: Type })
   type: Type;
 
   @Column()
   finAddress: string;
 
-  @Column({ type: 'enum', enum: ServicerIdType, default: ServicerIdType.BIC })
+  @Column({ type: 'enum', enum: ServicerIdType })
   servicerIdType: ServicerIdType;
 
   @Column()

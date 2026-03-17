@@ -1,41 +1,36 @@
-import {
-  Controller,
-  Param,
-  UseGuards,
-  Get,
-  Post,
-  ParseUUIDPipe,
-} from '@nestjs/common';
+import { Controller, Param, UseGuards, Body, Post } from '@nestjs/common';
 import { OtpService } from './otp.service';
 import { Participant } from 'src/common/decorators/participant/participant.decorator';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 
 @UseGuards(JwtAuthGuard)
-@Controller('api/fp/cas/v2/customer')
+@Controller('api/fp/customers')
 export class OtpController {
-  constructor(
-    // Inject OTP service
-    private readonly otpService: OtpService,
-  ) {}
+  constructor(private readonly otpService: OtpService) {}
 
-  // ================== generateOtp ==================
-  // Generates OTP for customer activation
-  @Get(':uuid/otp')
-  generateOtp(
+  @Post(':customerId/otp')
+  generate(
     @Participant() participantId: string,
-    @Param('uuid', new ParseUUIDPipe()) uuid: string,
+    @Param('customerId') customerId: string,
   ) {
-    return this.otpService.generate(participantId, uuid);
+    return this.otpService.generate(participantId, customerId, 'REGISTER');
   }
 
-  // ================== completeOtp ==================
-  // Verifies OTP and activates the customer
-  @Post(':uuid/:otp/completion')
-  completeOtp(
+  @Post(':customerId/otp/verify')
+  verify(
     @Participant() participantId: string,
-    @Param('uuid') uuid: string,
-    @Param('otp') otpcode: string,
+    @Param('customerId') customerId: string,
+    @Body('otp') otp: string,
   ) {
-    return this.otpService.complete(participantId, uuid, otpcode);
+    return this.otpService.verify(participantId, customerId, otp, 'REGISTER');
+  }
+
+  @Post(':customerId/otp/complete')
+  complete(
+    @Participant() participantId: string,
+    @Param('customerId') customerId: string,
+    @Body('otp') otp: string,
+  ) {
+    return this.otpService.completeRegistration(participantId, customerId, otp);
   }
 }

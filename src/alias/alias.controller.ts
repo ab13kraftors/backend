@@ -10,59 +10,48 @@ import {
 } from '@nestjs/common';
 import { AliasService } from './alias.service';
 import { Participant } from 'src/common/decorators/participant/participant.decorator';
-import { CreateAliasDto } from './entities/dto/create-alias.dto';
-import { UpdateAliasDto } from './entities/dto/update-create.dto';
+import { CreateAliasDto } from './dto/create-alias.dto';
+import { UpdateAliasDto } from './dto/update-create.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 
 @UseGuards(JwtAuthGuard)
-@Controller('api/fp/cas/v2/customer')
+@Controller('api/fp/customers')
 export class AliasController {
-  constructor(
-    // Inject Alias service
-    private readonly aliasService: AliasService,
-  ) {}
+  constructor(private readonly aliasService: AliasService) {}
 
-  // ================== create ==================
-  // Creates a new alias for a customer
-  @Post(':ccuuid/aliases')
+  @Post(':customerId/aliases')
   create(
     @Participant() participantId: string,
-    @Param('ccuuid') ccuuid: string,
+    @Param('customerId') customerId: string,
     @Body() dto: CreateAliasDto,
   ) {
-    return this.aliasService.create(participantId, ccuuid, dto);
+    return this.aliasService.create(participantId, customerId, dto);
   }
 
-  // ================== findAll ==================
-  // Returns all aliases for a customer
-  @Get(':ccuuid/aliases')
+  @Get(':customerId/aliases')
   findAll(
     @Participant() participantId: string,
-    @Param('ccuuid') ccuuid: string,
+    @Param('customerId') customerId: string,
   ) {
-    return this.aliasService.findAll(participantId, ccuuid);
+    return this.aliasService.findAll(participantId, customerId);
   }
 
-  // ================== update ==================
-  // Updates an existing alias
-  @Put(':ccuuid/aliases/:aliasUuid')
+  @Put(':customerId/aliases/:aliasId')
   update(
     @Participant() participantId: string,
-    @Param('ccuuid') ccuuid: string,
-    @Param('aliasUuid') aliasUuid: string,
+    @Param('customerId') customerId: string,
+    @Param('aliasId') aliasId: string,
     @Body() dto: UpdateAliasDto,
   ) {
-    return this.aliasService.update(participantId, ccuuid, aliasUuid, dto);
+    return this.aliasService.update(aliasId, participantId, dto);
   }
 
-  // ================== remove ==================
-  // Deletes a customer alias
-  @Delete(':ccuuid/aliases/:aliasUuid')
+  @Delete(':customerId/aliases/:aliasId')
   remove(
     @Participant() participantId: string,
-    @Param('ccuuid') ccuuid: string,
-    @Param('aliasUuid') aliasUuid: string,
+    @Param('customerId') customerId: string,
+    @Param('aliasId') aliasId: string,
   ) {
-    return this.aliasService.remove(participantId, ccuuid, aliasUuid);
+    return this.aliasService.remove(aliasId, participantId);
   }
 }

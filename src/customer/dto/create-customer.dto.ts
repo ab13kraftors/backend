@@ -6,6 +6,7 @@ import {
   IsBoolean,
   ValidateIf,
   IsEmail,
+  IsString,
 } from 'class-validator';
 import {
   CustomerType,
@@ -15,11 +16,10 @@ import {
 } from 'src/common/enums/customer.enums';
 
 export class CreateCustomerDto {
-  // COMMON (ALL CUSTOMERS)
-
   @IsEnum(CustomerType)
   type: CustomerType;
 
+  @IsString()
   @IsNotEmpty()
   externalId: string;
 
@@ -29,12 +29,14 @@ export class CreateCustomerDto {
   @IsEnum(DocumentType)
   documentType: DocumentType;
 
+  @IsString()
   @IsNotEmpty()
   documentId: string;
 
   @IsDateString()
   documentValidityDate: string;
 
+  @IsString()
   @IsNotEmpty()
   msisdn: string;
 
@@ -42,13 +44,13 @@ export class CreateCustomerDto {
   @IsBoolean()
   msisdnIsOwned?: boolean;
 
-  // INDIVIDUAL ONLY
-
   @ValidateIf((o: CreateCustomerDto) => o.type === CustomerType.INDIVIDUAL)
+  @IsString()
   @IsNotEmpty()
   firstName?: string;
 
   @ValidateIf((o: CreateCustomerDto) => o.type === CustomerType.INDIVIDUAL)
+  @IsString()
   @IsNotEmpty()
   lastName?: string;
 
@@ -70,9 +72,8 @@ export class CreateCustomerDto {
   @IsEmail()
   secondEmail?: string;
 
-  // COMPANY ONLY
-
   @ValidateIf((o: CreateCustomerDto) => o.type === CustomerType.COMPANY)
+  @IsString()
   @IsNotEmpty()
   companyName?: string;
 }

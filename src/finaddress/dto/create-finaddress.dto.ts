@@ -8,7 +8,6 @@ export class CreateFinAddressDto {
   @IsNotEmpty()
   finAddress: string;
 
-  @IsNotEmpty()
   @IsEnum(ServicerIdType)
   servicerIdType: ServicerIdType;
 

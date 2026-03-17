@@ -5,6 +5,7 @@ import {
   IsDateString,
   ValidateIf,
   IsEmail,
+  IsString,
 } from 'class-validator';
 import {
   CustomerType,
@@ -15,14 +16,12 @@ import {
 } from 'src/common/enums/customer.enums';
 
 export class UpdateCustomerDto {
-  // REQUIRED FOR CONDITIONAL VALIDATION
   @IsOptional()
   @IsEnum(CustomerType)
   type?: CustomerType;
 
-  // Common
-
   @IsOptional()
+  @IsString()
   externalId?: string;
 
   @IsOptional()
@@ -38,6 +37,7 @@ export class UpdateCustomerDto {
   documentType?: DocumentType;
 
   @IsOptional()
+  @IsString()
   documentId?: string;
 
   @IsOptional()
@@ -45,20 +45,21 @@ export class UpdateCustomerDto {
   documentValidityDate?: string;
 
   @IsOptional()
+  @IsString()
   msisdn?: string;
 
   @IsOptional()
   @IsBoolean()
   msisdnIsOwned?: boolean;
 
-  // INDIVIDUAL
-
   @ValidateIf((o: UpdateCustomerDto) => o.type === CustomerType.INDIVIDUAL)
   @IsOptional()
+  @IsString()
   firstName?: string;
 
   @ValidateIf((o: UpdateCustomerDto) => o.type === CustomerType.INDIVIDUAL)
   @IsOptional()
+  @IsString()
   lastName?: string;
 
   @ValidateIf((o: UpdateCustomerDto) => o.type === CustomerType.INDIVIDUAL)
@@ -79,9 +80,8 @@ export class UpdateCustomerDto {
   @IsEmail()
   secondEmail?: string;
 
-  // COMPANY
-
   @ValidateIf((o: UpdateCustomerDto) => o.type === CustomerType.COMPANY)
   @IsOptional()
+  @IsString()
   companyName?: string;
 }

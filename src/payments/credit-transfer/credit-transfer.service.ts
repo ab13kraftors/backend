@@ -68,6 +68,8 @@ export class CreditTransferService {
       throw new BadRequestException('Invalid amount');
     }
 
+    await this.set
+
     if (dto.currency !== Currency.SLE) {
       throw new BadRequestException('Only SLE currency is supported');
     }

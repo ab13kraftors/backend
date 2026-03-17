@@ -11,19 +11,15 @@ import {
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { FinaddressService } from './finaddress.service';
 import { Participant } from 'src/common/decorators/participant/participant.decorator';
-import { CreateFinAddressDto } from './entities/dto/create-finaddress.dto';
+import { CreateFinAddressDto } from './dto/create-finaddress.dto';
 import { AliasType } from 'src/common/enums/alias.enums';
+import { SetDefaultFinAddressDto } from './dto/set-default-finaddress.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('api/fp/cas/v2')
 export class FinaddressController {
-  constructor(
-    // Inject Finaddress service
-    private readonly finService: FinaddressService,
-  ) {}
+  constructor(private readonly finService: FinaddressService) {}
 
-  // ================== resolveAlias ==================
-  // Resolves alias to financial address
   @Get('finaddresses')
   resolveAlias(
     @Query('aliasType') aliasType: AliasType,
@@ -32,48 +28,53 @@ export class FinaddressController {
     return this.finService.resolveAlias(aliasType, aliasValue);
   }
 
-  // ================== create ==================
-  // Creates a financial address for a customer
-  @Post('customer/:ccuuid/finaddresses')
+  @Post('customer/:customerId/finaddresses')
   create(
     @Participant() participantId: string,
-    @Param('ccuuid') ccuuid: string,
+    @Param('customerId') customerId: string,
     @Body() dto: CreateFinAddressDto,
   ) {
-    return this.finService.create(participantId, ccuuid, dto);
+    return this.finService.create(participantId, customerId, dto);
   }
 
-  // ================== findAll ==================
-  // Returns paginated financial addresses for a customer
-  @Get('customer/:ccuuid/finaddresses')
+  @Get('customer/:customerId/finaddresses')
   findAll(
     @Participant() participantId: string,
-    @Param('ccuuid') ccuuid: string,
+    @Param('customerId') customerId: string,
     @Query('pageNo') pageNo?: number,
     @Query('pageSize') pageSize?: number,
   ) {
-    return this.finService.findAll(participantId, ccuuid, pageNo, pageSize);
+    return this.finService.findAll(
+      participantId,
+      customerId,
+      Number(pageNo ?? 0),
+      Number(pageSize ?? 10),
+    );
   }
 
-  // ================== setDefault ==================
-  // Sets a financial address as default
-  @Post('customer/:ccuuid/finaddresses/default')
+  @Post('customer/:customerId/finaddresses/default')
   setDefault(
     @Participant() participantId: string,
-    @Param('ccuuid') ccuuid: string,
-    @Body('finUuid') finUuid: string,
+    @Param('customerId') customerId: string,
+    @Body() dto: SetDefaultFinAddressDto,
   ) {
-    return this.finService.setDefault(participantId, ccuuid, finUuid);
+    return this.finService.setDefault(
+      participantId,
+      customerId,
+      finAddressId,
+    );
   }
 
-  // ================== remove ==================
-  // Deletes a financial address
-  @Delete('customer/:ccuuid/finaddresses/:finUuid')
+  @Delete('customer/:customerId/finaddresses/:finAddressId')
   remove(
     @Participant() participantId: string,
-    @Param('ccuuid') ccuuid: string,
-    @Param('finUuid') finUuid: string,
+    @Param('customerId') customerId: string,
+    @Param('finAddressId') finAddressId: string,
   ) {
-    return this.finService.remove(participantId, ccuuid, finUuid);
+    return this.finService.remove(
+      participantId,
+      customerId,
+      finAddressId,
+    );
   }
 }

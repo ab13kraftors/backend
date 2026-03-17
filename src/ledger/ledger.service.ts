@@ -53,9 +53,12 @@ export class LedgerService {
     Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
   }
 
-  async getDerivedBalance(finAddress: string): Promise<string> {
+  async getDerivedBalance(
+    finAddress: string,
+    participantId: string,
+  ): Promise<string> {
     const account = await this.accountRepo.findOne({
-      where: { finAddress },
+      where: { finAddress, participantId },
       select: ['accountId'],
     });
 
@@ -141,6 +144,7 @@ export class LedgerService {
         manager,
         input.legs.map((l) => l.finAddress),
         input.currency,
+        input.participantId,
       );
 
       const { totalDebit, totalCredit } = await this.checkBalancesAndInvariant(
@@ -225,6 +229,7 @@ export class LedgerService {
       const accountsByAccountId = await this.lockAccountsByAccountId(
         manager,
         accountIds,
+        input.participantId,
       );
 
       const accountsByFinAddress = new Map<string, Account>();
@@ -327,6 +332,7 @@ export class LedgerService {
     manager: EntityManager,
     finAddresses: string[],
     currency: Currency,
+    participantId: string,
   ): Promise<Map<string, Account>> {
     const uniqueFinAddresses = [...new Set(finAddresses)];
     const accounts = new Map<string, Account>();
@@ -334,7 +340,10 @@ export class LedgerService {
     for (const finAddress of uniqueFinAddresses) {
       const acc = await manager
         .createQueryBuilder(Account, 'a')
-        .where('a.finAddress = :fin', { fin: finAddress })
+        .where('a.finAddress = :fin AND a.participantId = :participantId', {
+          fin: finAddress,
+          participantId,
+        })
         .setLock('pessimistic_write')
         .getOne();
 
@@ -361,6 +370,7 @@ export class LedgerService {
   private async lockAccountsByAccountId(
     manager: EntityManager,
     accountIds: string[],
+    participantId: string,
   ): Promise<Map<string, Account>> {
     const uniqueAccountIds = [...new Set(accountIds)];
     const accounts = new Map<string, Account>();
@@ -368,7 +378,10 @@ export class LedgerService {
     for (const accountId of uniqueAccountIds) {
       const acc = await manager
         .createQueryBuilder(Account, 'a')
-        .where('a.accountId = :id', { id: accountId })
+        .where('a.accountId = :id AND a.participantId = :participantId', {
+          id: accountId,
+          participantId,
+        })
         .setLock('pessimistic_write')
         .getOne();
 

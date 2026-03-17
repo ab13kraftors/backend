@@ -74,3 +74,8 @@ export class AccountsController {
     return this.accountsService.updateStatus(accountId, dto.status);
   }
 }
+
+/*For now acceptable, but future fix:
+
+participantId must come from auth
+not body */

@@ -5,6 +5,9 @@ import {
   Gender,
   DocumentType,
 } from 'src/common/enums/customer.enums';
+import { Wallet } from 'src/wallet/entities/wallet.entity';
+import { Account } from 'src/accounts/entities/account.entity';
+import { PaymentInstrument } from 'src/payment-instruments/entities/payment-instrument.entity';
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -12,22 +15,18 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   OneToMany,
+  OneToOne,
+  JoinColumn,
+  Index,
 } from 'typeorm';
-import { Alias } from 'src/alias/entities/alias.entity';
-import { FinAddress } from 'src/finaddress/entities/finaddress.entity';
 
 @Entity('customers')
+@Index(['participantId', 'externalId'], { unique: true })
+@Index(['participantId', 'msisdn'], { unique: true })
 export class Customer {
   @PrimaryGeneratedColumn('uuid')
-  uuid: string;
+  customerId: string;
 
-  @OneToMany(() => Alias, (alias) => alias.customer)
-  aliases: Alias[];
-
-  @OneToMany(() => FinAddress, (finAddress) => finAddress.customer)
-  finAddresses: FinAddress[];
-
-  // One company id share by multiple customers
   @Column()
   participantId: string;
 
@@ -69,7 +68,24 @@ export class Customer {
   @Column({ nullable: true, select: false })
   pinHash?: string;
 
-  // INDIVIDUAL-only============================
+  @Column({ nullable: true, default: 0 })
+  pinFailedAttempts?: number;
+
+  @Column({ nullable: true, type: 'timestamp' })
+  pinLockedUntil?: Date;
+
+  @Column({ nullable: true, default: false })
+  mfaEnabled?: boolean;
+
+  @Column({ nullable: true })
+  defaultAccountId?: string;
+
+  @Column({ nullable: true })
+  defaultWalletId?: string;
+
+  @Column({ nullable: true })
+  defaultPaymentInstrumentId?: string;
+
   @Column({ nullable: true })
   firstName?: string;
 
@@ -88,13 +104,36 @@ export class Customer {
   @Column({ nullable: true })
   secondEmail?: string;
 
-  // COMPANY-only==============================
   @Column({ nullable: true })
   companyName?: string;
 
+  @OneToOne(() => Account, { nullable: true })
+  @JoinColumn({ name: 'defaultAccountId' })
+  defaultAccount?: Account;
+
+  @OneToOne(() => Wallet, { nullable: true })
+  @JoinColumn({ name: 'defaultWalletId' })
+  defaultWallet?: Wallet;
+
+  @OneToOne(() => PaymentInstrument, { nullable: true })
+  @JoinColumn({ name: 'defaultPaymentInstrumentId' })
+  defaultPaymentInstrument?: PaymentInstrument;
+
+  @OneToMany(() => Account, (account) => account.customer)
+  accounts: Account[];
+
+  @OneToMany(() => Wallet, (wallet) => wallet.customer)
+  wallets: Wallet;
+
+  @OneToMany(
+    () => PaymentInstrument,
+    (paymentInstrument) => paymentInstrument.customer,
+  )
+  paymentInstruments: PaymentInstrument[];
+
   @CreateDateColumn({ type: 'timestamp' })
-  createdDate: Date;
+  createdAt: Date;
 
   @UpdateDateColumn({ type: 'timestamp', nullable: true })
-  modifiedDate?: Date;
+  updatedAt?: Date;
 }

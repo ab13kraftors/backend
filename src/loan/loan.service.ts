@@ -45,306 +45,224 @@ export class LoanService {
     private readonly walletService: WalletService,
     private readonly kycService: KycService,
     private readonly dataSource: DataSource,
-  ) {}
+  ) {
+    Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
+  }
 
-  // CUSTOMER-FACING OPERATIONS
-
-  /**
-   * Submit a new loan application.
-   * Prerequisites: KYC HARD_APPROVED, active wallet, no existing PENDING/ACTIVE loan.
-   */
   async applyLoan(
-    ccuuid: string,
+    customerId: string,
     participantId: string,
     dto: ApplyLoanDto,
   ): Promise<LoanApplication> {
-    // 1. KYC gate
-    await this.kycService.requireTier(ccuuid, KycTier.HARD_APPROVED);
+    await this.kycService.requireTier(
+      customerId,
+      participantId,
+      KycTier.HARD_APPROVED,
+    );
 
-    // 2. Wallet must exist
-    await this.walletService.findByCustomer(ccuuid);
+    await this.walletService.findByCustomer(customerId, participantId);
 
-    // 3. No existing open loan
-    const existing = await this.loanRepo.findOneBy({
-      ccuuid,
-      status: In([
-        LoanStatus.PENDING,
-        LoanStatus.ACTIVE,
-        LoanStatus.APPROVED,
-        LoanStatus.OVERDUE,
-      ]),
+    const amount = new Decimal(dto.amount);
+    if (amount.lte(0)) throw new BadRequestException('Invalid amount');
+
+    const existing = await this.loanRepo.findOne({
+      where: {
+        customerId,
+        participantId,
+        status: In([
+          LoanStatus.PENDING,
+          LoanStatus.ACTIVE,
+          LoanStatus.APPROVED,
+          LoanStatus.OVERDUE,
+        ]),
+      },
     });
 
     if (existing) {
-      throw new ConflictException(
-        `Customer already has an open loan (${existing.loanId}, status: ${existing.status})`,
-      );
+      throw new ConflictException('Customer already has active loan');
     }
 
-    const loan = this.loanRepo.create({
-      ccuuid,
-      participantId,
-      requestedAmount: dto.amount,
-      outstandingBalance: dto.amount,
-      status: LoanStatus.PENDING,
-      purpose: dto.purpose ?? null,
-    });
-
-    const saved = await this.loanRepo.save(loan);
-    this.logger.log(
-      `Loan application created: ${saved.loanId} for customer ${ccuuid}`,
+    return this.loanRepo.save(
+      this.loanRepo.create({
+        customerId,
+        participantId,
+        requestedAmount: amount.toFixed(4),
+        outstandingBalance: amount.toFixed(4),
+        status: LoanStatus.PENDING,
+        purpose: dto.purpose ?? null,
+      }),
     );
-    return saved;
   }
 
-  /**
-   * Repay an amount against an ACTIVE loan from the customer's wallet.
-   * Supports partial and full repayments.
-   * Idempotent: providing the same idempotencyKey twice is a no-op.
-   */
   async repayLoan(
-    ccuuid: string,
+    customerId: string,
     loanId: string,
     dto: RepayLoanDto,
   ): Promise<LoanRepayment> {
     return this.dataSource.transaction(async (manager) => {
-      // ── Idempotency check ──────────────────────────────────────────────────
       if (dto.idempotencyKey) {
-        const duplicate = await manager.findOne(LoanRepayment, {
+        const dup = await manager.findOne(LoanRepayment, {
           where: { idempotencyKey: dto.idempotencyKey },
         });
-        if (duplicate) {
-          this.logger.warn(
-            `Duplicate repayment attempt (idempotencyKey=${dto.idempotencyKey})`,
-          );
-          return duplicate;
-        }
+        if (dup) return dup;
       }
 
-      // ── Load & validate loan ───────────────────────────────────────────────
-      const loan = await manager.findOneBy(LoanApplication, {
-        loanId,
-        ccuuid,
+      const loan = await manager.findOne(LoanApplication, {
+        where: { loanId, customerId },
+        lock: { mode: 'pessimistic_write' },
       });
 
-      if (!loan) throw new NotFoundException(`Loan ${loanId} not found`);
+      if (!loan) throw new NotFoundException('Loan not found');
 
-      if (
-        loan.status !== LoanStatus.ACTIVE &&
-        loan.status !== LoanStatus.OVERDUE
-      ) {
-        throw new BadRequestException(
-          `Loan is not repayable in status: ${loan.status}`,
-        );
+      if (![LoanStatus.ACTIVE, LoanStatus.OVERDUE].includes(loan.status)) {
+        throw new BadRequestException('Loan not repayable');
       }
 
-      // ── Amount guards ──────────────────────────────────────────────────────
       const repayAmount = new Decimal(dto.amount);
       const outstanding = new Decimal(loan.outstandingBalance);
 
-      if (repayAmount.lte(0)) {
-        throw new BadRequestException(
-          'Repayment amount must be greater than zero',
-        );
-      }
+      if (repayAmount.lte(0)) throw new BadRequestException('Invalid amount');
+      if (repayAmount.gt(outstanding))
+        throw new BadRequestException('Exceeds outstanding');
 
-      if (repayAmount.gt(outstanding)) {
-        throw new BadRequestException(
-          `Repayment amount (${dto.amount}) exceeds outstanding balance (${loan.outstandingBalance})`,
-        );
-      }
+      const wallet = await this.walletService.findByCustomer(
+        customerId,
+        loan.participantId,
+      );
 
-      // ── Wallet balance check ───────────────────────────────────────────────
-      const wallet = await this.walletService.findByCustomer(ccuuid);
-      const walletBalance = new Decimal(
+      const balance = new Decimal(
         await this.ledgerService.getDerivedBalance(wallet.finAddress),
       );
 
-      if (walletBalance.lt(repayAmount)) {
-        throw new BadRequestException(
-          'Insufficient wallet balance for repayment',
-        );
+      if (balance.lt(repayAmount)) {
+        throw new BadRequestException('Insufficient balance');
       }
 
-      // ── Post ledger transfer ───────────────────────────────────────────────
-
       const txId = crypto.randomUUID();
+
       const result = await this.ledgerService.postTransfer(
         {
           txId,
           idempotencyKey: dto.idempotencyKey ?? txId,
           reference: `Loan repayment ${loanId}`,
           participantId: loan.participantId,
-          postedBy: ccuuid,
+          postedBy: customerId,
           legs: [
             {
               finAddress: wallet.finAddress,
               amount: repayAmount.toFixed(4),
-              isCredit: false, // DEBIT — money leaving wallet
-              memo: `Loan repayment for ${loanId}`,
+              isCredit: false,
             },
             {
               finAddress: SYSTEM_POOL,
               amount: repayAmount.toFixed(4),
-              isCredit: true, // CREDIT — money arriving at pool
-              memo: `Loan repayment from ${ccuuid}`,
+              isCredit: true,
             },
           ],
         },
         manager,
       );
 
-      // ── Update loan outstanding balance ────────────────────────────────────
       const newOutstanding = outstanding.minus(repayAmount);
-      const outstandingBefore = loan.outstandingBalance;
+      const before = loan.outstandingBalance;
+
       loan.outstandingBalance = newOutstanding.toFixed(4);
 
       if (newOutstanding.lte(0)) {
         loan.status = LoanStatus.REPAID;
-        this.logger.log(`Loan ${loanId} fully repaid by customer ${ccuuid}`);
       }
 
-      await manager.save(LoanApplication, loan);
+      await manager.save(loan);
 
-      // ── Persist repayment record ───────────────────────────────────────────
-      const repayment = manager.create(LoanRepayment, {
-        loanId,
-        ccuuid,
-        amount: repayAmount.toFixed(4),
-        outstandingBefore,
-        outstandingAfter: loan.outstandingBalance,
-        ledgerJournalId: result.journalId,
-        idempotencyKey: dto.idempotencyKey ?? txId,
-      });
-
-      return manager.save(LoanRepayment, repayment);
+      return manager.save(
+        manager.create(LoanRepayment, {
+          loanId,
+          customerId,
+          participantId: loan.participantId,
+          amount: repayAmount.toFixed(4),
+          outstandingBefore: before,
+          outstandingAfter: loan.outstandingBalance,
+          ledgerJournalId: result.journalId,
+          idempotencyKey: dto.idempotencyKey ?? txId,
+        }),
+      );
     });
   }
 
-  // READ / QUERY
-
-  async getLoansByCustomer(ccuuid: string): Promise<LoanApplication[]> {
-    return this.loanRepo.find({
-      where: { ccuuid },
-      order: { appliedAt: 'DESC' },
-    });
-  }
-
-  async getLoanById(loanId: string, ccuuid: string): Promise<LoanApplication> {
-    const loan = await this.loanRepo.findOneBy({ loanId, ccuuid });
-    if (!loan) throw new NotFoundException(`Loan ${loanId} not found`);
-    return loan;
-  }
-
-  async getRepaymentHistory(
-    loanId: string,
-    ccuuid: string,
-  ): Promise<LoanRepayment[]> {
-    // Verify ownership first
-    await this.getLoanById(loanId, ccuuid);
-    return this.repayRepo.find({
+  async approveLoan(loanId: string, adminId: string, dto: ApproveLoanDto) {
+    const loan = await this.loanRepo.findOne({
       where: { loanId },
-      order: { repaidAt: 'DESC' },
     });
-  }
 
-  // ADMIN OPERATIONS
+    if (!loan) throw new NotFoundException();
 
-  async approveLoan(
-    loanId: string,
-    adminId: string,
-    dto: ApproveLoanDto,
-  ): Promise<LoanApplication> {
-    const loan = await this.loanRepo.findOne({ where: { loanId } });
-    if (!loan) throw new NotFoundException(`Loan ${loanId} not found`);
+    if (loan.status !== LoanStatus.PENDING) throw new BadRequestException();
 
-    if (loan.status !== LoanStatus.PENDING) {
-      throw new BadRequestException(`Loan ${loanId} is not in PENDING status`);
-    }
+    const due = new Date(dto.dueDate);
+    if (due <= new Date()) throw new BadRequestException('Invalid due date');
 
     loan.status = LoanStatus.APPROVED;
     loan.approvedAmount = new Decimal(dto.approvedAmount).toFixed(4);
     loan.outstandingBalance = loan.approvedAmount;
-    loan.dueDate = new Date(dto.dueDate);
-    loan.reviewedAt = new Date();
+    loan.dueDate = due;
     loan.reviewedBy = adminId;
+    loan.reviewedAt = new Date();
 
-    const saved = await this.loanRepo.save(loan);
-    this.logger.log(`Loan ${loanId} approved by admin ${adminId}`);
-    return saved;
+    return this.loanRepo.save(loan);
   }
 
-  async rejectLoan(
-    loanId: string,
-    adminId: string,
-    dto: RejectLoanDto,
-  ): Promise<LoanApplication> {
+  async rejectLoan(loanId: string, adminId: string, dto: RejectLoanDto) {
     const loan = await this.loanRepo.findOne({ where: { loanId } });
-    if (!loan) throw new NotFoundException(`Loan ${loanId} not found`);
 
-    if (loan.status !== LoanStatus.PENDING) {
-      throw new BadRequestException(`Loan ${loanId} is not in PENDING status`);
-    }
+    if (!loan) throw new NotFoundException();
 
     loan.status = LoanStatus.REJECTED;
     loan.rejectionReason = dto.rejectionReason ?? null;
-    loan.reviewedAt = new Date();
     loan.reviewedBy = adminId;
+    loan.reviewedAt = new Date();
 
-    const saved = await this.loanRepo.save(loan);
-    this.logger.log(`Loan ${loanId} rejected by admin ${adminId}`);
-    return saved;
+    return this.loanRepo.save(loan);
   }
 
-  /**
-   * Disburse an APPROVED loan into the customer's wallet.
-   *
-   * Ledger direction (inverted naming convention):
-   *   • SYSTEM_POOL LOSES funds → isCredit: false  (DEBIT  pool)
-   *   • Customer wallet GAINS funds  → isCredit: true (CREDIT wallet)
-   */
-  async disburseLoan(
-    loanId: string,
-    adminId: string,
-  ): Promise<LoanApplication> {
+  async disburseLoan(loanId: string, adminId: string) {
     return this.dataSource.transaction(async (manager) => {
       const loan = await manager.findOne(LoanApplication, {
         where: { loanId },
         lock: { mode: 'pessimistic_write' },
       });
 
-      if (!loan) throw new NotFoundException(`Loan ${loanId} not found`);
+      if (!loan) throw new NotFoundException();
 
-      if (loan.status !== LoanStatus.APPROVED) {
-        throw new BadRequestException(
-          `Loan must be in APPROVED status to disburse (current: ${loan.status})`,
-        );
-      }
+      if (loan.disbursedAt) throw new ConflictException('Already disbursed');
 
-      const wallet = await this.walletService.findByCustomer(loan.ccuuid);
+      if (loan.status !== LoanStatus.APPROVED) throw new BadRequestException();
 
-      const disbursementAmount = new Decimal(loan.approvedAmount);
+      const wallet = await this.walletService.findByCustomer(
+        loan.customerId,
+        loan.participantId,
+      );
+
+      const amount = new Decimal(loan.approvedAmount);
+
       const txId = crypto.randomUUID();
 
       const result = await this.ledgerService.postTransfer(
         {
           txId,
-          idempotencyKey: `disburse-${loanId}`, // guaranteed unique per loan
-          reference: `Loan disbursement ${loanId}`,
+          idempotencyKey: `disburse-${loanId}`,
+          reference: `Loan disbursement`,
           participantId: loan.participantId,
           postedBy: adminId,
           legs: [
             {
               finAddress: SYSTEM_POOL,
-              amount: disbursementAmount.toFixed(4),
-              isCredit: false, // DEBIT — money leaving the pool
-              memo: `Disburse loan ${loanId} to ${loan.ccuuid}`,
+              amount: amount.toFixed(4),
+              isCredit: false,
             },
             {
               finAddress: wallet.finAddress,
-              amount: disbursementAmount.toFixed(4),
-              isCredit: true, // CREDIT — money arriving in wallet
-              memo: `Loan disbursement ${loanId}`,
+              amount: amount.toFixed(4),
+              isCredit: true,
             },
           ],
         },
@@ -355,50 +273,52 @@ export class LoanService {
       loan.disbursedAt = new Date();
       loan.ledgerJournalId = result.journalId;
 
-      await manager.save(LoanApplication, loan);
-
-      this.logger.log(
-        `Loan ${loanId} disbursed to wallet ${wallet.finAddress} by admin ${adminId}`,
-      );
-      return loan;
+      return manager.save(loan);
     });
   }
 
-  async getAllLoans(
-    status?: LoanStatus,
-    participantId?: string,
-  ): Promise<LoanApplication[]> {
-    const where: FindOptionsWhere<LoanApplication> = {};
-    if (status) where.status = status;
-    if (participantId) where.participantId = participantId;
-
+  async getLoansByCustomer(customerId: string) {
     return this.loanRepo.find({
-      where,
+      where: { customerId },
       order: { appliedAt: 'DESC' },
     });
   }
 
-  // SCHEDULED JOB — OVERDUE DETECTION
+  async getLoanById(loanId: string, customerId: string) {
+    const loan = await this.loanRepo.findOne({
+      where: { loanId, customerId },
+    });
 
-  /**
-   * Runs at midnight every day.   * Marks any ACTIVE loans whose dueDate has passed as OVERDUE.
-   */
+    if (!loan) throw new NotFoundException();
+
+    return loan;
+  }
+
+  async getRepaymentHistory(loanId: string, customerId: string) {
+    await this.getLoanById(loanId, customerId);
+
+    return this.repayRepo.find({
+      where: { loanId, customerId },
+      order: { repaidAt: 'DESC' },
+    });
+  }
+
+  async getAllLoans(status?: LoanStatus, participantId?: string) {
+    const where: FindOptionsWhere<LoanApplication> = {};
+    if (status) where.status = status;
+    if (participantId) where.participantId = participantId;
+
+    return this.loanRepo.find({ where });
+  }
+
   @Cron('0 0 * * *')
-  async markOverdueLoans(): Promise<void> {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const result = await this.loanRepo
+  async markOverdueLoans() {
+    await this.loanRepo
       .createQueryBuilder()
-      .update(LoanApplication)
+      .update()
       .set({ status: LoanStatus.OVERDUE })
-      .where('status = :status', { status: LoanStatus.ACTIVE })
-      .andWhere('dueDate < :today', { today })
-      .andWhere('outstandingBalance > :zero', { zero: 0 })
+      .where('status = :s', { s: LoanStatus.ACTIVE })
+      .andWhere('dueDate < :d', { d: new Date() })
       .execute();
-
-    if (result.affected && result.affected > 0) {
-      this.logger.warn(`Marked ${result.affected} loan(s) as OVERDUE`);
-    }
   }
 }

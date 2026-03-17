@@ -25,10 +25,6 @@ import { Role } from 'src/common/enums/auth.enums';
 export class LoanAdminController {
   constructor(private readonly loanService: LoanService) {}
 
-  /**
-   * GET /admin/loan
-   * List all loans. Optional filters: ?status=PENDING&participantId=xxx
-   */
   @Get()
   listAll(
     @Query('status') status?: LoanStatus,
@@ -37,10 +33,6 @@ export class LoanAdminController {
     return this.loanService.getAllLoans(status, participantId);
   }
 
-  /**
-   * POST /admin/loan/:loanId/approve
-   * Approve a PENDING loan application and set the approved amount + due date.
-   */
   @Post(':loanId/approve')
   approve(
     @Param('loanId', ParseUUIDPipe) loanId: string,
@@ -50,10 +42,6 @@ export class LoanAdminController {
     return this.loanService.approveLoan(loanId, req.user.adminId, dto);
   }
 
-  /**
-   * POST /admin/loan/:loanId/reject
-   * Reject a PENDING loan application.
-   */
   @Post(':loanId/reject')
   reject(
     @Param('loanId', ParseUUIDPipe) loanId: string,
@@ -63,13 +51,8 @@ export class LoanAdminController {
     return this.loanService.rejectLoan(loanId, req.user.adminId, dto);
   }
 
-  /**
-   * POST /admin/loan/:loanId/disburse
-   * Disburse an APPROVED loan into the customer's wallet via the ledger engine.
-   * Idempotent — the ledger key `disburse-{loanId}` prevents double-disbursement.
-   */
   @Post(':loanId/disburse')
-  @Roles(Role.ADMIN) // Disburse is ADMIN-only, not LOAN_OFFICER
+  @Roles(Role.ADMIN)
   disburse(
     @Param('loanId', ParseUUIDPipe) loanId: string,
     @Req() req: Request & { user: { adminId: string } },

@@ -4,81 +4,87 @@ import {
   Injectable,
   NotFoundException,
   UnauthorizedException,
+  forwardRef,
+  Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Customer } from './entities/customer.entity';
-import { EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CustomerStatus, CustomerType } from 'src/common/enums/customer.enums';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import * as bcrypt from 'bcrypt';
 import { SetPinDto, ChangePinDto } from './dto/pin.dto';
-//---One Step Registration---
-import { DataSource } from 'typeorm';
-import { Alias } from 'src/alias/entities/alias.entity';
-import { FinAddress } from 'src/finaddress/entities/finaddress.entity';
-import { OneStepRegistrationDto } from './dto/one-step-registration.dto';
 import { WalletService } from 'src/wallet/wallet.service';
-// ---One Step Registration---
+import { AccountsService } from 'src/accounts/accounts.service';
+import { CreateWalletDto } from 'src/wallet/dto/create-wallet.dto';
+import { AccountType } from 'src/accounts/enums/account.enum';
+import { Currency } from 'src/common/enums/transaction.enums';
 
 @Injectable()
 export class CustomerService {
   constructor(
     private readonly dataSource: DataSource,
+
     @InjectRepository(Customer)
-    private customerRepository: Repository<Customer>,
-    private walletService: WalletService,
+    private readonly customerRepository: Repository<Customer>,
+
+    @Inject(forwardRef(() => WalletService))
+    private readonly walletService: WalletService,
+
+    @Inject(forwardRef(() => AccountsService))
+    private readonly accountsService: AccountsService,
   ) {}
 
-  // ================== create ==================
-  // Creates a new customer and automatically creates wallet
   async create(
     dto: CreateCustomerDto,
     participantId: string,
   ): Promise<Customer> {
     return this.dataSource.transaction(async (manager) => {
-      const existing = await this.customerRepository.findOne({
-        where: { externalId: dto.externalId, participantId },
-      });
-
-      // Prevent duplicate externalId for same participant
-      if (existing) {
-        throw new ConflictException('Already exists');
-      }
-
-      // Validate business rules
+      await this.assertCreateUniqueness(dto, participantId, manager);
       this.validateCreateRules(dto);
 
-      const customer = this.customerRepository.create({
+      const customerRepository = manager.getRepository(Customer);
+
+      const customer = customerRepository.create({
         ...dto,
         participantId,
-        status: CustomerStatus.INACTIVE,
+        status: CustomerStatus.ACTIVE,
         documentValidityDate: new Date(dto.documentValidityDate),
         dob: dto.dob ? new Date(dto.dob) : undefined,
       });
 
-      const savedCustomer = await this.customerRepository.save(customer);
+      const savedCustomer = await customerRepository.save(customer);
 
-      // Create wallet for customer
-      await this.walletService.createWallet(
-        savedCustomer.uuid,
-        participantId,
+      const mainAccount = await this.accountsService.createCustomerMainAccount(
+        {
+          customerId: savedCustomer.customerId,
+          participantId,
+          currency: Currency.SLE,
+          type: AccountType.CUSTOMER_MAIN,
+          metadata: {
+            customerId: savedCustomer.customerId,
+            externalId: savedCustomer.externalId,
+            msisdn: savedCustomer.msisdn,
+          },
+        } as any,
         manager,
       );
+
+      savedCustomer.defaultAccountId = mainAccount.accountId;
+      await customerRepository.save(savedCustomer);
 
       return savedCustomer;
     });
   }
 
-  // ================== update ==================
-  // Updates customer information
   async update(
-    uuid: string,
+    customerId: string,
     dto: UpdateCustomerDto,
     participantId: string,
   ): Promise<Customer> {
     const existing = await this.customerRepository.findOne({
-      where: { uuid, participantId },
+      where: { customerId, participantId },
     });
 
     if (!existing) {
@@ -86,9 +92,30 @@ export class CustomerService {
     }
 
     const effectiveType = dto.type ?? existing.type;
-
-    // Validate update rules
     this.validateUpdateRules(dto, existing, effectiveType);
+
+    if (dto.externalId && dto.externalId !== existing.externalId) {
+      const duplicateExternalId = await this.customerRepository.findOne({
+        where: { participantId, externalId: dto.externalId },
+      });
+
+      if (
+        duplicateExternalId &&
+        duplicateExternalId.customerId !== customerId
+      ) {
+        throw new ConflictException('externalId already exists');
+      }
+    }
+
+    if (dto.msisdn && dto.msisdn !== existing.msisdn) {
+      const duplicateMsisdn = await this.customerRepository.findOne({
+        where: { participantId, msisdn: dto.msisdn },
+      });
+
+      if (duplicateMsisdn && duplicateMsisdn.customerId !== customerId) {
+        throw new ConflictException('msisdn already exists');
+      }
+    }
 
     Object.assign(existing, {
       ...dto,
@@ -101,17 +128,18 @@ export class CustomerService {
     return this.customerRepository.save(existing);
   }
 
-  // ================== updateStatus ==================
-  // Updates customer status
   async updateStatus(customer: Customer) {
     return this.customerRepository.save(customer);
   }
 
-  // ================== findOne ==================
-  // Returns a single customer
-  async findOne(uuid: string, participantId: string): Promise<Customer> {
+  async findOne(customerId: string, participantId: string): Promise<Customer> {
     const customer = await this.customerRepository.findOne({
-      where: { uuid, participantId },
+      where: { customerId, participantId },
+      relations: [
+        'defaultAccount',
+        'defaultWallet',
+        'defaultPaymentInstrument',
+      ],
     });
 
     if (!customer) {
@@ -121,19 +149,16 @@ export class CustomerService {
     return customer;
   }
 
-  // ================== findAll ==================
-  // Returns all customers of a participant
   async findAll(participantId: string): Promise<Customer[]> {
-    return await this.customerRepository.find({
+    return this.customerRepository.find({
       where: { participantId },
+      order: { createdAt: 'DESC' },
     });
   }
 
-  // ================== remove ==================
-  // Deletes a customer
-  async remove(uuid: string, participantId: string): Promise<void> {
+  async remove(customerId: string, participantId: string): Promise<void> {
     const result = await this.customerRepository.delete({
-      uuid,
+      customerId,
       participantId,
     });
 
@@ -142,8 +167,190 @@ export class CustomerService {
     }
   }
 
-  // ================== validateCreateRules ==================
-  // Business validation for creating customer
+  async setPin(customerId: string, participantId: string, dto: SetPinDto) {
+    const customer = await this.customerRepository
+      .createQueryBuilder('c')
+      .addSelect('c.pinHash')
+      .where(
+        'c.customerId = :customerId AND c.participantId = :participantId',
+        {
+          customerId,
+          participantId,
+        },
+      )
+      .getOne();
+
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    if (customer.pinHash) {
+      throw new BadRequestException(
+        'PIN already set. Use change-pin to update it.',
+      );
+    }
+
+    const saltRounds = Number(process.env.PIN_SALT_ROUNDS ?? 12);
+    if (!Number.isInteger(saltRounds) || saltRounds <= 0) {
+      throw new Error('Invalid PIN_SALT_ROUNDS');
+    }
+
+    customer.pinHash = await bcrypt.hash(dto.pin, saltRounds);
+    customer.pinFailedAttempts = 0;
+    customer.pinLockedUntil = null as any;
+
+    await this.customerRepository.save(customer);
+    return { message: 'PIN set successfully' };
+  }
+
+  async changePin(
+    customerId: string,
+    participantId: string,
+    dto: ChangePinDto,
+  ) {
+    const customer = await this.customerRepository
+      .createQueryBuilder('c')
+      .addSelect('c.pinHash')
+      .where(
+        'c.customerId = :customerId AND c.participantId = :participantId',
+        {
+          customerId,
+          participantId,
+        },
+      )
+      .getOne();
+
+    if (!customer) {
+      throw new NotFoundException('Customer not found');
+    }
+
+    if (!customer.pinHash) {
+      throw new BadRequestException('No PIN set. Use set-pin first.');
+    }
+
+    const valid = await bcrypt.compare(dto.currentPin, customer.pinHash);
+    if (!valid) {
+      throw new UnauthorizedException('Current PIN is incorrect');
+    }
+
+    const saltRounds = Number(process.env.PIN_SALT_ROUNDS ?? 12);
+    customer.pinHash = await bcrypt.hash(dto.newPin, saltRounds);
+    customer.pinFailedAttempts = 0;
+    customer.pinLockedUntil = null as any;
+
+    await this.customerRepository.save(customer);
+    return { message: 'PIN changed successfully' };
+  }
+
+  async verifyPin(
+    customerId: string,
+    participantId: string,
+    pin: string,
+  ): Promise<{ message: string }> {
+    await this.verifyPinInternal(customerId, participantId, pin);
+    return { message: 'PIN verified successfully' };
+  }
+
+  async verifyPinOrThrow(
+    customerId: string,
+    participantId: string,
+    pin: string,
+  ): Promise<void> {
+    await this.verifyPinInternal(customerId, participantId, pin);
+  }
+
+  async ensureWallet(
+    customerId: string,
+    participantId: string,
+    manager?: EntityManager,
+  ) {
+    const customer = await this.findOne(customerId, participantId);
+
+    const existingWallet = await this.walletService.getOptionalWalletByCustomer(
+      customerId,
+      participantId,
+    );
+
+    if (existingWallet) {
+      if (!customer.defaultWalletId) {
+        customer.defaultWalletId = existingWallet.walletId;
+        await this.customerRepository.save(customer);
+      }
+      return existingWallet;
+    }
+
+    const wallet = await this.walletService.createWallet(
+      {
+        customerId,
+        finAddress: `wallet.${customerId}`,
+      } as CreateWalletDto,
+      participantId,
+      manager,
+    );
+
+    customer.defaultWalletId = wallet.walletId;
+    await this.customerRepository.save(customer);
+
+    return wallet;
+  }
+
+  async setDefaultAccount(
+    customerId: string,
+    participantId: string,
+    accountId: string,
+  ): Promise<Customer> {
+    const customer = await this.findOne(customerId, participantId);
+
+    const account = await this.accountsService.findByIdForCustomerOrThrow(
+      accountId,
+      customerId,
+    );
+
+    customer.defaultAccountId = account.accountId;
+    return this.customerRepository.save(customer);
+  }
+
+  async setDefaultWallet(
+    customerId: string,
+    participantId: string,
+    walletId: string,
+  ): Promise<Customer> {
+    const customer = await this.findOne(customerId, participantId);
+
+    const wallet = await this.walletService.getWallet(walletId, participantId);
+
+    if (!wallet || wallet.customerId !== customerId) {
+      throw new BadRequestException('Wallet does not belong to this customer');
+    }
+
+    customer.defaultWalletId = wallet.walletId;
+    return this.customerRepository.save(customer);
+  }
+
+  private async assertCreateUniqueness(
+    dto: CreateCustomerDto,
+    participantId: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    const repo = manager.getRepository(Customer);
+
+    const existingExternal = await repo.findOne({
+      where: { externalId: dto.externalId, participantId },
+    });
+
+    if (existingExternal) {
+      throw new ConflictException('externalId already exists');
+    }
+
+    const existingMsisdn = await repo.findOne({
+      where: { msisdn: dto.msisdn, participantId },
+    });
+
+    if (existingMsisdn) {
+      throw new ConflictException('msisdn already exists');
+    }
+  }
+
   private validateCreateRules(dto: CreateCustomerDto) {
     if (dto.type === CustomerType.INDIVIDUAL && dto.companyName) {
       throw new BadRequestException(
@@ -161,8 +368,6 @@ export class CustomerService {
     }
   }
 
-  // ================== validateUpdateRules ==================
-  // Business validation for updating customer
   private validateUpdateRules(
     dto: UpdateCustomerDto,
     existing: Customer,
@@ -182,163 +387,70 @@ export class CustomerService {
         'Personal fields are not allowed for COMPANY customer',
       );
     }
-  }
 
-  // ================== oneStep ==================
-  // Performs customer + alias + finaddress + wallet creation in one transaction
-  async oneStep(participantId: string, dto: OneStepRegistrationDto) {
-    this.validateCreateRules(dto.customer);
-
-    return this.dataSource.transaction(async (manager) => {
-      // Create Customer
-      const customer = manager.create(Customer, {
-        ...dto.customer,
-        participantId,
-        status: CustomerStatus.INACTIVE,
-        documentValidityDate: new Date(dto.customer.documentValidityDate),
-        dob: dto.customer.dob ? new Date(dto.customer.dob) : undefined,
-      });
-
-      const savedCustomer = await manager.save(customer);
-
-      // Check if alias already exists -- To check for globally
-      const existingAlias = await manager.findOne(Alias, {
-        where: {
-          participantId,
-          value: dto.alias.value,
-          // customer: savedCustomer,
-        },
-      });
-
-      if (existingAlias) {
-        throw new ConflictException('Alias already Exists');
-      }
-
-      // Create Alias
-      const alias = manager.create(Alias, {
-        ...dto.alias,
-        participantId,
-        ccuuid: savedCustomer.uuid,
-        customer: savedCustomer,
-      });
-
-      await manager.save(alias);
-
-      // Create Financial Address
-      const fin = manager.create(FinAddress, {
-        ...dto.finAddress,
-        participantId,
-        ccuuid: savedCustomer.uuid,
-        isDefault: true,
-      });
-
-      await manager.save(fin);
-
-      // Create Wallet- use manager
-      const wallet = await this.walletService.createWallet(
-        savedCustomer.uuid,
-        participantId,
-        manager,
-      );
-
-      return {
-        customer: savedCustomer,
-        alias,
-        finaddress: fin,
-        wallet,
-      };
-    });
-  }
-
-  // ================== setPin ==================
-  // Sets customer transaction PIN
-  async setPin(ccuuid: string, participantId: string, dto: SetPinDto) {
-    const customer = await this.customerRepository
-      .createQueryBuilder('c')
-      .addSelect('c.pinHash')
-      .where('c.uuid = :ccuuid AND c.participantId = :participantId', {
-        ccuuid,
-        participantId,
-      })
-      .getOne();
-
-    if (!customer) throw new NotFoundException('Customer not found');
-
-    // Prevent overwriting existing PIN
-    if (customer.pinHash) {
+    if (
+      existing.type === CustomerType.COMPANY &&
+      effectiveType === CustomerType.INDIVIDUAL &&
+      existing.companyName &&
+      !dto.firstName
+    ) {
       throw new BadRequestException(
-        'PIN already set. Use change-pin to update it.',
+        'firstName is required when changing type to INDIVIDUAL',
       );
     }
-
-    const saltRounds = Number(process.env.PIN_SALT_ROUNDS);
-    if (!Number.isInteger(saltRounds) || saltRounds <= 0) {
-      throw new Error('Invalid PIN_SALT_ROUNDS');
-    }
-
-    // Hash and store PIN
-    customer.pinHash = await bcrypt.hash(dto.pin, saltRounds);
-    await this.customerRepository.save(customer);
-    return { message: 'PIN set successfully' };
   }
 
-  // ================== changePin ==================
-  // Changes existing customer PIN
-  async changePin(ccuuid: string, participantId: string, dto: ChangePinDto) {
-    const customer = await this.customerRepository
-      .createQueryBuilder('c')
-      .addSelect('c.pinHash')
-      .where('c.uuid = :ccuuid AND c.participantId = :participantId', {
-        ccuuid,
-        participantId,
-      })
-      .getOne();
-
-    if (!customer) throw new NotFoundException('Customer not found');
-
-    if (!customer.pinHash)
-      throw new BadRequestException('No PIN set. Use set-pin first.');
-
-    // Validate current PIN
-    const valid = await bcrypt.compare(dto.currentPin, customer.pinHash);
-    if (!valid) throw new UnauthorizedException('Current PIN is incorrect');
-
-    const saltRounds = Number(process.env.PIN_SALT_ROUNDS ?? 12);
-
-    // Hash new PIN
-    customer.pinHash = await bcrypt.hash(dto.newPin, saltRounds);
-
-    await this.customerRepository.save(customer);
-    return { message: 'PIN changed successfully' };
-  }
-
-  // ================== verifyPin ==================
-  // Verifies PIN before performing wallet transactions
-  async verifyPin(
-    ccuuid: string,
+  private async verifyPinInternal(
+    customerId: string,
     participantId: string,
     pin: string,
   ): Promise<void> {
-    const customer = await this.customerRepository
-      .createQueryBuilder('c')
-      .addSelect('c.pinHash')
-      .where('c.uuid = :ccuuid AND c.participantId = :participantId', {
-        ccuuid,
-        participantId,
-      })
-      .getOne();
+    await this.dataSource.transaction(async (manager) => {
+      const customer = await manager
+        .getRepository(Customer)
+        .createQueryBuilder('c')
+        .addSelect('c.pinHash')
+        .where('c.customerId = :customerId', { customerId })
+        .andWhere('c.participantId = :participantId', { participantId })
+        .setLock('pessimistic_write')
+        .getOne();
 
-    if (!customer) throw new NotFoundException('Customer not found');
+      if (!customer) {
+        throw new NotFoundException('Customer not found');
+      }
 
-    if (!customer.pinHash) {
-      throw new BadRequestException(
-        'PIN not set. Please set your PIN before making payments.',
-      );
-    }
+      if (!customer.pinHash) {
+        throw new BadRequestException(
+          'PIN not set. Please set your PIN before making payments.',
+        );
+      }
 
-    // Validate entered PIN
-    const valid = await bcrypt.compare(pin, customer.pinHash);
+      if (
+        customer.pinLockedUntil &&
+        new Date(customer.pinLockedUntil).getTime() > Date.now()
+      ) {
+        throw new UnauthorizedException('PIN is temporarily locked');
+      }
 
-    if (!valid) throw new UnauthorizedException('Invalid PIN');
+      const valid = await bcrypt.compare(pin, customer.pinHash);
+
+      if (!valid) {
+        customer.pinFailedAttempts = (customer.pinFailedAttempts ?? 0) + 1;
+
+        if (customer.pinFailedAttempts >= 3) {
+          const lockedUntil = new Date();
+          lockedUntil.setMinutes(lockedUntil.getMinutes() + 15);
+          customer.pinLockedUntil = lockedUntil;
+          customer.pinFailedAttempts = 0;
+        }
+
+        await manager.getRepository(Customer).save(customer);
+        throw new UnauthorizedException('Invalid PIN');
+      }
+
+      customer.pinFailedAttempts = 0;
+      customer.pinLockedUntil = null as any;
+      await manager.getRepository(Customer).save(customer);
+    });
   }
 }

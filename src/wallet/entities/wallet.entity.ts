@@ -30,7 +30,7 @@ export class Wallet {
   finAddress: string;
 
   @Column({ type: 'uuid', nullable: true })
-  accountId: string | null;
+  accountId: string;
 
   @Column({
     type: 'enum',

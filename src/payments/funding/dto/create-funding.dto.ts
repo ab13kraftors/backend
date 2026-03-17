@@ -4,7 +4,15 @@ import { Currency } from 'src/common/enums/transaction.enums';
 
 export class CreateFundingDto {
   @IsString()
-  walletId: string;
+  customerId: string; // ✅ REQUIRED
+
+  @IsOptional()
+  @IsString()
+  walletId?: string;
+
+  @IsOptional()
+  @IsString()
+  accountId?: string;
 
   @IsEnum(FundMethod)
   method: FundMethod;
@@ -22,7 +30,7 @@ export class CreateFundingDto {
 
   @IsOptional()
   @IsString()
-  externalReference?: string;
+  destinationFinAddress?: string;
 
   @IsOptional()
   @IsString()

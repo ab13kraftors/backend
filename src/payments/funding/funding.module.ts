@@ -1,22 +1,20 @@
-import { Module, forwardRef } from '@nestjs/common';
-import { FundingController } from './funding.controller';
-import { FundingService } from './funding.service';
+import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
-import { FundingWallet } from './entities/funding.entity';
-import { Wallet } from 'src/wallet/entities/wallet.entity';
-import { Transaction } from '../entities/transaction.entity';
+import { FundingController } from './funding.controller';
+import { FundingService } from './funding.service';
+import { Funding } from './entities/funding.entity';
 
 import { LedgerModule } from 'src/ledger/ledger.module';
 import { AccountsModule } from 'src/accounts/accounts.module';
-import { PaymentsModule } from '../payments.module';
+import { WalletModule } from 'src/wallet/wallet.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([FundingWallet, Wallet, Transaction]),
+    TypeOrmModule.forFeature([Funding]),
     LedgerModule,
     AccountsModule,
-    forwardRef(() => PaymentsModule),
+    WalletModule,
   ],
   controllers: [FundingController],
   providers: [FundingService],

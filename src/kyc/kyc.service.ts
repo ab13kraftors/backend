@@ -7,24 +7,41 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { KycRecord } from './entities/kyc.entity';
-import { KycTier, KycRejectionReason } from 'src/common/enums/kyc.enums';
+import { KycTier } from 'src/common/enums/kyc.enums';
 import { SoftKycDto } from './dto/soft-kyc.dto';
 import { HardKycDto } from './dto/hard-kyc.dto';
 import { RejectKycDto } from './dto/review-kyc.dto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { NotificationsService } from 'src/notifications/notifications.service';
+
+interface KycFiles {
+  idFront?: Express.Multer.File[];
+  idBack?: Express.Multer.File[];
+  selfie?: Express.Multer.File[];
+  addressProof?: Express.Multer.File[];
+}
 
 @Injectable()
 export class KycService {
   constructor(
     @InjectRepository(KycRecord)
     private kycRepo: Repository<KycRecord>,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // ── CUSTOMER: Submit Soft KYC ─────────────────────────────────
   // Auto-approves — no manual review needed for basic identity info
-  async submitSoft(ccuuid: string, participantId: string, dto: SoftKycDto) {
-    let record = await this.kycRepo.findOne({ where: { ccuuid } });
+  async submitSoft(customerId: string, participantId: string, dto: SoftKycDto) {
+    let record = await this.kycRepo.findOne({
+      where: { customerId, participantId },
+    });
+
+    const existing = await this.kycRepo.findOne({
+      where: { idNumber: dto.idNumber, participantId },
+    });
+    if (existing && existing.customerId !== customerId)
+      throw new BadRequestException('ID already used');
 
     if (
       record &&
@@ -36,8 +53,13 @@ export class KycService {
     }
 
     if (!record) {
-      record = this.kycRepo.create({ ccuuid, participantId });
+      record = this.kycRepo.create({ customerId, participantId });
     }
+
+    const dob = new Date(dto.dateOfBirth);
+    const age = new Date().getFullYear() - dob.getFullYear();
+
+    if (age < 18) throw new BadRequestException('Customer must be 18+');
 
     Object.assign(record, {
       fullName: dto.fullName,
@@ -47,6 +69,7 @@ export class KycService {
       idDocumentType: dto.idDocumentType,
       idExpiryDate: new Date(dto.idExpiryDate),
       tier: KycTier.SOFT_APPROVED, // auto-approve soft KYC
+      lastUpdatedBy: customerId,
     });
 
     await this.kycRepo.save(record);
@@ -61,7 +84,7 @@ export class KycService {
   // Requires soft KYC to be approved first
   // Files uploaded via Multer — stored locally or on S3
   async submitHard(
-    ccuuid: string,
+    customerId: string,
     participantId: string,
     dto: HardKycDto,
     files: {
@@ -71,7 +94,9 @@ export class KycService {
       addressProof?: Express.Multer.File[];
     },
   ) {
-    const record = await this.kycRepo.findOne({ where: { ccuuid } });
+    const record = await this.kycRepo.findOne({
+      where: { customerId, participantId },
+    });
 
     if (!record || record.tier !== KycTier.SOFT_APPROVED) {
       throw new BadRequestException(
@@ -86,7 +111,7 @@ export class KycService {
       throw new BadRequestException('Selfie image is required');
 
     // Save file paths
-    const storePaths = await this.storeFiles(ccuuid, files);
+    const storePaths = await this.storeFiles(customerId, files);
 
     Object.assign(record, {
       addressLine1: dto.addressLine1,
@@ -102,6 +127,7 @@ export class KycService {
       tier: KycTier.HARD_PENDING,
       rejectionReason: null,
       rejectionNote: null,
+      lastUpdatedBy: customerId,
     });
 
     await this.kycRepo.save(record);
@@ -113,9 +139,9 @@ export class KycService {
   }
 
   // ── CUSTOMER: Get own KYC status ──────────────────────────────
-  async getStatus(ccuuid: string, participantId: string) {
+  async getStatus(customerId: string, participantId: string) {
     const record = await this.kycRepo.findOne({
-      where: { ccuuid, participantId },
+      where: { customerId, participantId },
     });
     if (!record) return { tier: KycTier.NONE, message: 'No KYC submitted yet' };
 
@@ -126,6 +152,14 @@ export class KycService {
       rejectionNote: record.rejectionNote ?? null,
       updatedAt: record.updatedAt,
     };
+  }
+
+  async getTier(customerId: string, participantId: string): Promise<KycTier> {
+    const record = await this.kycRepo.findOne({
+      where: { customerId, participantId },
+    });
+
+    return record?.tier ?? KycTier.NONE;
   }
 
   // ── ADMIN: Get all pending Hard KYC records ───────────────────
@@ -147,6 +181,13 @@ export class KycService {
   async approveHard(kycId: string, adminId: string) {
     const record = await this.getRecord(kycId);
 
+    if (record.tier === KycTier.HARD_APPROVED) {
+      // Manage limits
+      throw new BadRequestException(
+        `Already approved. Current status: ${record.tier}`,
+      );
+    }
+
     if (record.tier !== KycTier.HARD_PENDING) {
       throw new BadRequestException(
         `Cannot approve. Current status: ${record.tier}`,
@@ -158,8 +199,14 @@ export class KycService {
     record.reviewedAt = new Date();
     record.rejectionReason = null;
     record.rejectionNote = null;
+    record.lastUpdatedBy = adminId;
 
     await this.kycRepo.save(record);
+    await this.notificationsService.createInAppNotification(
+      record.participantId,
+      'Kyc Approved',
+      'Your KYC has been approved',
+    );
     return { kycId, tier: record.tier, message: 'Hard KYC approved' };
   }
 
@@ -179,15 +226,28 @@ export class KycService {
     record.reviewedAt = new Date();
     record.rejectionReason = dto.reason;
     record.rejectionNote = dto.note ?? undefined;
+    record.lastUpdatedBy = adminId;
 
     await this.kycRepo.save(record);
+    await this.notificationsService.createInAppNotification(
+      record.participantId,
+      'Kyc Rejected',
+      'Your KYC has been rejected',
+    );
     return { kycId, tier: record.tier, message: 'Hard KYC rejected' };
   }
 
   // ── INTERNAL: gate check used by other services ───────────────
   // Call this before allowing Cards or Loans
-  async requireTier(ccuuid: string, required: KycTier) {
-    const record = await this.kycRepo.findOne({ where: { ccuuid } });
+  async requireTier(
+    customerId: string,
+    participantId: string,
+    required: KycTier,
+  ) {
+    const record = await this.kycRepo.findOne({
+      where: { customerId, participantId },
+    });
+
     const tier = record?.tier ?? KycTier.NONE;
 
     const order = [
@@ -219,29 +279,21 @@ export class KycService {
   }
 
   // ── PRIVATE: file storage ─────────────────────────────────────
-  private async storeFiles(
-    ccuuid: string,
-    files: {
-      idFront?: Express.Multer.File[];
-      idBack?: Express.Multer.File[];
-      selfie?: Express.Multer.File[];
-      addressProof?: Express.Multer.File[];
-    },
-  ) {
+  private async storeFiles(customerId: string, files: KycFiles) {
     const storage = process.env.KYC_STORAGE ?? 'local';
 
     if (storage === 'local') {
-      return this.storeLocal(ccuuid, files);
+      return this.storeLocal(customerId, files);
     }
 
     // TODO: swap to S3 in production
-    // return this.storeS3(ccuuid, files);
-    return this.storeLocal(ccuuid, files);
+    // return this.storeS3(customerId, files);
+    return this.storeLocal(customerId, files);
   }
 
-  private async storeLocal(ccuuid: string, files: any) {
+  private storeLocal(customerId: string, files: KycFiles) {
     const base = path.resolve(process.env.KYC_UPLOAD_PATH ?? './uploads/kyc');
-    const dir = path.join(base, ccuuid);
+    const dir = path.join(base, customerId, Date.now().toString());
     fs.mkdirSync(dir, { recursive: true });
 
     const save = (

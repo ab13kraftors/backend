@@ -5,19 +5,25 @@ import {
   CreateDateColumn,
 } from 'typeorm';
 
-@Entity()
+@Entity('otps')
 export class Otp {
   @PrimaryGeneratedColumn('uuid')
-  uuid: string;
+  otpId: string;
 
   @Column()
-  ccuuid: string;
+  customerId: string;
 
   @Column()
   participantId: string;
 
   @Column()
   otpCode: string;
+
+  @Column()
+  purpose: string; // REGISTER, LOGIN, PAYMENT, MFA
+
+  @Column({ default: 0 })
+  attempts: number;
 
   @Column()
   expiresAt: Date;

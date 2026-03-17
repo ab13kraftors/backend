@@ -23,8 +23,14 @@ export class LedgerController {
   }
 
   @Get('balance/:finAddress')
-  async getBalance(@Param('finAddress') finAddress: string) {
-    const balance = await this.ledgerService.getDerivedBalance(finAddress);
+  async getBalance(
+    @Param('finAddress') finAddress: string,
+    @Param('participantId') participantId: string,
+  ) {
+    const balance = await this.ledgerService.getDerivedBalance(
+      finAddress,
+      participantId,
+    );
     return { finAddress, balance };
   }
 
