@@ -163,9 +163,9 @@ export class KycService {
   }
 
   // ── ADMIN: Get all pending Hard KYC records ───────────────────
-  async getPendingReviews() {
+  async getPendingReviews(participantId: string) {
     return this.kycRepo.find({
-      where: { tier: KycTier.HARD_PENDING },
+      where: { participantId, tier: KycTier.HARD_PENDING },
       order: { createdAt: 'ASC' },
     });
   }

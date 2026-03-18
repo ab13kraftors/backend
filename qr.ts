@@ -1,3 +1,68 @@
+
+/////////////////////////
+// FILE: src/payments/qr/qr.controller.ts
+/////////////////////////
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { QrService } from './qr.service';
+import { QrPaymentDto } from './dto/qr-payment.dto';
+import { QrGenerateDto } from './dto/qr-generate.dto';
+import { Participant } from 'src/common/decorators/participant/participant.decorator';
+import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+
+@UseGuards(JwtAuthGuard)
+@Controller('/api/fp/payments')
+export class QrController {
+  constructor(private readonly qrs: QrService) {}
+
+  @Post('qr/generate')
+  generateQR(@Body() dto: QrGenerateDto) {
+    return this.qrs.createQR(dto);
+  }
+
+  @Post('qr/decode')
+  decodeQR(@Body('qrPayload') qrPayload: string) {
+    return this.qrs.decode(qrPayload);
+  }
+
+  @Post('qr')
+  initiate(@Body() dto: QrPaymentDto, @Participant() participantId: string) {
+    return this.qrs.process(participantId, dto);
+  }
+}
+
+/////////////////////////
+// FILE: src/payments/qr/qr.module.ts
+/////////////////////////
+import { Module, forwardRef } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { Transaction } from '../transaction/entities/transaction.entity';
+import { QrController } from './qr.controller';
+import { QrService } from './qr.service';
+import { CasModule } from 'src/cas/cas.module';
+import { LedgerModule } from 'src/ledger/ledger.module';
+import { AccountsModule } from 'src/accounts/accounts.module';
+import { WalletModule } from 'src/wallet/wallet.module';
+import { CustomerModule } from 'src/customer/customer.module';
+import { PaymentsService } from '../payments.service';
+
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([Transaction]),
+    CasModule,
+    LedgerModule,
+    AccountsModule,
+    forwardRef(() => WalletModule),
+    forwardRef(() => CustomerModule),
+  ],
+  controllers: [QrController],
+  providers: [QrService, PaymentsService],
+  exports: [QrService],
+})
+export class QrModule {}
+
+/////////////////////////
+// FILE: src/payments/qr/qr.service.ts
+/////////////////////////
 import {
   BadRequestException,
   Inject,
@@ -329,4 +394,122 @@ export class QrService {
       throw new BadRequestException('Invalid QR Payload format');
     }
   }
+}
+
+/////////////////////////
+// FILE: src/payments/qr/dto/qr-generate.dto.ts
+/////////////////////////
+import {
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+} from 'class-validator';
+import { AliasType } from 'src/common/enums/alias.enums';
+import { Currency } from 'src/common/enums/transaction.enums';
+
+export class QrGenerateDto {
+  @IsEnum(AliasType)
+  aliasType: AliasType;
+
+  @IsString()
+  @IsNotEmpty()
+  aliasValue: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d+(\.\d{1,2})?$/)
+  amount?: string;
+
+  @IsOptional()
+  @IsEnum(Currency)
+  currency?: Currency;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  merchantName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(140)
+  reference?: string;
+}
+
+/////////////////////////
+// FILE: src/payments/qr/dto/qr-payment.dto.ts
+/////////////////////////
+import {
+  IsEnum,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Length,
+  Matches,
+  MaxLength,
+} from 'class-validator';
+import { Currency } from 'src/common/enums/transaction.enums';
+
+export class QrPaymentDto {
+  @IsString()
+  @IsNotEmpty()
+  qrPayload: string;
+
+  @IsOptional()
+  @IsString()
+  customerId?: string;
+
+  @IsIn(['ACCOUNT', 'WALLET'])
+  sourceType: 'ACCOUNT' | 'WALLET';
+
+  @IsOptional()
+  @IsString()
+  sourceAccountId?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceWalletId?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceFinAddress?: string;
+
+  @IsOptional()
+  @IsString()
+  senderAlias?: string;
+
+  @IsOptional()
+  @IsString()
+  debtorName?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d+(\.\d{1,2})?$/)
+  amount?: string;
+
+  @IsOptional()
+  @IsEnum(Currency)
+  currency?: Currency;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(140)
+  reference?: string;
+
+  @IsOptional()
+  @IsString()
+  narration?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(4, 6)
+  @Matches(/^\d{4,6}$/)
+  pin?: string;
+
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
 }

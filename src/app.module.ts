@@ -23,8 +23,6 @@ import { EmailModule } from './common/email/email.module';
 import { KycModule } from './kyc/kyc.module';
 import { LedgerModule } from './ledger/ledger.module';
 import { ComplianceModule } from './compliance/compliance.module';
-import { LoadModule } from './load/load.module';
-import { WithdrawModule } from './withdraw/withdraw.module';
 import { RolesGuard } from './common/guards/auth/roles.guard';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { LoanModule } from './loan/loan.module';
@@ -32,6 +30,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { SettingsModule } from './settings/settings.module';
 import { PaymentInstrumentsModule } from './payment-instruments/payment-instruments.module';
 import { LimitsRiskModule } from './limits-risk/limits-risk.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -61,13 +60,12 @@ import { LimitsRiskModule } from './limits-risk/limits-risk.module';
     KycModule,
     LedgerModule,
     ComplianceModule,
-    LoadModule,
-    WithdrawModule,
     LoanModule,
     NotificationsModule,
     SettingsModule,
     PaymentInstrumentsModule,
     LimitsRiskModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [

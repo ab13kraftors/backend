@@ -1,6 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { Transaction } from '../entities/transaction.entity';
+import { Transaction } from '../transaction/entities/transaction.entity';
 import { QrController } from './qr.controller';
 import { QrService } from './qr.service';
 import { CasModule } from 'src/cas/cas.module';

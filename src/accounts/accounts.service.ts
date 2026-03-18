@@ -51,7 +51,7 @@ export class AccountsService {
       return existing;
     }
 
-    await this.ensureUniqueFinAddress(repo, dto.finAddress);
+    await this.ensureUniqueFinAddress(repo, dto.finAddress, participantId);
 
     const account = repo.create({
       accountNumber: await this.generateUniqueAccountNumber(repo),
@@ -72,6 +72,7 @@ export class AccountsService {
   async createWalletAccount(
     dto: CreateAccountDto,
     manager?: EntityManager,
+    participantId: string,
   ): Promise<Account> {
     if (!dto.customerId) {
       throw new BadRequestException('customerId is required');
@@ -102,7 +103,7 @@ export class AccountsService {
       return existing;
     }
 
-    await this.ensureUniqueFinAddress(repo, dto.finAddress);
+    await this.ensureUniqueFinAddress(repo, dto.finAddress, participantId);
 
     const account = repo.create({
       accountNumber: await this.generateUniqueAccountNumber(repo),
@@ -134,6 +135,7 @@ export class AccountsService {
     const existing = await repo.findOne({
       where: {
         type: AccountType.SYSTEM,
+        participantId,
       },
     });
 
@@ -141,7 +143,7 @@ export class AccountsService {
       return existing;
     }
 
-    await this.ensureUniqueFinAddress(repo, finAddress);
+    await this.ensureUniqueFinAddress(repo, finAddress, participantId);
 
     const account = repo.create({
       accountNumber: await this.generateUniqueAccountNumber(repo),
@@ -168,7 +170,7 @@ export class AccountsService {
     const repo = this.getRepo(manager);
 
     const existing = await repo.findOne({
-      where: { type: AccountType.SYSTEM },
+      where: { type: AccountType.SYSTEM, participantId },
     });
 
     if (existing) return existing;
@@ -306,11 +308,12 @@ export class AccountsService {
 
   async updateStatus(
     accountId: string,
+    participantId: string,
     status: AccountStatus,
     manager?: EntityManager,
   ): Promise<Account> {
     const repo = this.getRepo(manager);
-    const account = await this.findById(accountId, manager);
+    const account = await this.findById(accountId, participantId);
 
     account.status = status;
     return repo.save(account);
@@ -318,9 +321,10 @@ export class AccountsService {
 
   async assertAccountActive(
     accountId: string,
+    participantId: string,
     manager?: EntityManager,
   ): Promise<Account> {
-    const account = await this.findById(accountId, manager);
+    const account = await this.findById(accountId, participantId);
 
     if (account.status !== AccountStatus.ACTIVE) {
       throw new BadRequestException(`Account ${accountId} is not active`);
@@ -332,8 +336,15 @@ export class AccountsService {
   async assertFinAddressActive(
     finAddress: string,
     manager?: EntityManager,
+    participantId: string,
   ): Promise<Account> {
-    const account = await this.findByFinAddress(finAddress, manager);
+    const repo = this.getRepo(manager);
+    const account = await repo.findOne({
+      where: { finAddress, participantId },
+    });
+
+    if (!account)
+      throw new NotFoundException(`Account not found ${finAddress}`);
 
     if (account.status !== AccountStatus.ACTIVE) {
       throw new BadRequestException(`Account ${finAddress} is not active`);
@@ -345,11 +356,17 @@ export class AccountsService {
   private async ensureUniqueFinAddress(
     repo: Repository<Account>,
     finAddress?: string | null,
+    participantId: string,
   ): Promise<void> {
     if (!finAddress) return;
 
     const existing = await repo.findOne({
-      where: { finAddress },
+      where: {
+        finAddress,
+        participantId: repo.manager?.getRepository(Account)
+          ? undefined
+          : undefined,
+      },
     });
 
     if (existing) {

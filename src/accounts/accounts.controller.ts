@@ -4,6 +4,7 @@ import { CreateAccountDto } from './dto/create-account.dto';
 import { UpdateAccountStatusDto } from './dto/update-account-status.dto';
 import { AccountType } from './enums/account.enum';
 import { Currency } from 'src/common/enums/transaction.enums';
+import { Participant } from 'src/common/decorators/participant/participant.decorator';
 
 @Controller('accounts')
 export class AccountsController {
@@ -18,11 +19,17 @@ export class AccountsController {
   }
 
   @Post('wallet')
-  async createWallet(@Body() dto: CreateAccountDto) {
-    return this.accountsService.createWalletAccount({
-      ...dto,
-      type: AccountType.WALLET,
-    });
+  async createWallet(
+    @Body() dto: CreateAccountDto,
+    @Participant() participantId: string,
+  ) {
+    return this.accountsService.createWalletAccount(
+      {
+        ...dto,
+        type: AccountType.WALLET,
+      },
+      participantId,
+    );
   }
 
   @Post('system')
@@ -42,8 +49,11 @@ export class AccountsController {
   }
 
   @Get(':accountId')
-  async getById(@Param('accountId') accountId: string) {
-    return this.accountsService.findById(accountId);
+  async getById(
+    @Param('accountId') accountId: string,
+    @Participant() participantId: string,
+  ) {
+    return this.accountsService.findById(accountId, participantId);
   }
 
   @Get('fin-address/:finAddress')
@@ -70,8 +80,13 @@ export class AccountsController {
   async updateStatus(
     @Param('accountId') accountId: string,
     @Body() dto: UpdateAccountStatusDto,
+    @Participant() participantId: string,
   ) {
-    return this.accountsService.updateStatus(accountId, dto.status);
+    return this.accountsService.updateStatus(
+      accountId,
+      participantId,
+      dto.status,
+    );
   }
 }
 

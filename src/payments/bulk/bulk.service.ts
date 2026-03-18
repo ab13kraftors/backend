@@ -11,9 +11,9 @@ import { DataSource, EntityManager, Repository } from 'typeorm';
 import { Readable } from 'stream';
 import Decimal from 'decimal.js';
 
-import { BulkBatch } from '../entities/bulk-batch.entity';
-import { BulkItem, ItemStatus } from '../entities/bulk-item.entity';
-import { Transaction } from '../entities/transaction.entity';
+import { BulkBatch } from './entities/bulk-batch.entity';
+import { BulkItem, ItemStatus } from './entities/bulk-item.entity';
+import { Transaction } from '../transaction/entities/transaction.entity';
 
 import { CasService } from 'src/cas/cas.service';
 import { AliasType } from 'src/common/enums/alias.enums';

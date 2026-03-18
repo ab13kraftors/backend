@@ -1,10 +1,15 @@
+
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
 import { ComplianceService } from './compliance.service';
-import { ComplianceLog } from './entities/compliance-log.entity';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { Transaction } from 'src/payments/transaction/entities/transaction.entity';
+import { KycModule } from 'src/kyc/kyc.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([ComplianceLog])],
+  imports: [
+    TypeOrmModule.forFeature([Transaction]),
+    KycModule,
+  ],
   providers: [ComplianceService],
   exports: [ComplianceService],
 })

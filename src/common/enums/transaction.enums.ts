@@ -3,6 +3,7 @@ export enum TransactionStatus {
   PROCESSING = 'PROCESSING',
   COMPLETED = 'COMPLETED',
   FAILED = 'FAILED',
+  REVERSED = 'REVERSED'
 }
 
 export enum TransactionType {

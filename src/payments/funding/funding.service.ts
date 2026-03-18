@@ -16,6 +16,10 @@ import { AccountsService } from 'src/accounts/accounts.service';
 import { WalletService } from 'src/wallet/wallet.service';
 import { SYSTEM_POOL } from 'src/common/constants';
 import { TransactionStatus } from 'src/common/enums/transaction.enums';
+import { ComplianceTxnType } from 'src/compliance/enums/compliance.enum';
+import { ComplianceService } from 'src/compliance/compliance.service';
+import { TransactionType } from 'src/common/enums/transaction.enums';
+import { TransactionService } from '../transaction/transaction.service';
 
 @Injectable()
 export class FundingService {
@@ -26,6 +30,8 @@ export class FundingService {
     private ledger: LedgerService,
     private accounts: AccountsService,
     private walletService: WalletService,
+    private complianceService: ComplianceService,
+    private transactionService: TransactionService,
     private dataSource: DataSource,
   ) {
     Decimal.set({ precision: 20 });
@@ -44,6 +50,23 @@ export class FundingService {
       throw new BadRequestException('Invalid amount');
     }
 
+    await this.complianceService.validate(
+      {
+        customerId: dto.customerId,
+        type: ComplianceTxnType.FUNDING,
+        amount: dto.amount,
+        currency: dto.currency,
+      },
+      participantId,
+    );
+
+    if (dto.idempotencyKey) {
+      const existing = await this.transactionService.findByExternalId(
+        dto.idempotencyKey,
+      );
+      if (existing) return existing;
+    }
+
     return this.dataSource.transaction(async (manager) => {
       // ✅ FIX 1: TYPE SAFE ACCOUNT
       const account = dto.accountId
@@ -56,35 +79,60 @@ export class FundingService {
       if (!account) {
         throw new NotFoundException('Account not found');
       }
-
+      const source = dto.sourceFinAddress || SYSTEM_POOL;
       await this.accounts.assertFinAddressActive(account.finAddress, manager);
 
-      const source = dto.sourceFinAddress || SYSTEM_POOL;
-      const txId = crypto.randomUUID();
+      let tx = await this.transactionService.createTx(manager, {
+        participantId,
+        channel: TransactionType.CREDIT_TRANSFER,
+        customerId: account.customerId,
+        senderFinAddress: source,
+        receiverFinAddress: account.finAddress,
+        amount: Number(amount.toFixed(2)),
+        currency: dto.currency,
+        status: TransactionStatus.INITIATED,
+        externalId: dto.idempotencyKey,
+        reference: 'Funding Topup',
+      });
+
+      tx = await this.transactionService.updateTx(manager, tx.txId, {
+        status: TransactionStatus.PROCESSING,
+      });
+      const txId = tx.txId;
 
       // 🔹 External → Account
-      const result = await this.ledger.postTransfer(
-        {
-          txId,
-          participantId,
-          reference: 'Funding Topup',
-          postedBy: 'funding',
-          currency: dto.currency,
-          legs: [
-            {
-              finAddress: source,
-              amount: amount.toFixed(2),
-              isCredit: false,
-            },
-            {
-              finAddress: account.finAddress,
-              amount: amount.toFixed(2),
-              isCredit: true,
-            },
-          ],
-        },
-        manager,
-      );
+      let result;
+
+      try {
+        result = await this.ledger.postTransfer(
+          {
+            txId,
+            participantId,
+            reference: 'Funding Topup',
+            postedBy: 'funding',
+            currency: dto.currency,
+            legs: [
+              {
+                finAddress: source,
+                amount: amount.toFixed(2),
+                isCredit: false,
+              },
+              {
+                finAddress: account.finAddress,
+                amount: amount.toFixed(2),
+                isCredit: true,
+              },
+            ],
+          },
+          manager,
+        );
+      } catch (error) {
+        await this.transactionService.updateTx(manager, tx.txId, {
+          status: TransactionStatus.FAILED,
+          failureReason: error.message,
+        });
+        throw error;
+      }
 
       // ✅ FIX 2: DECLARE OUTSIDE
       let destinationFinAddress = account.finAddress;
@@ -133,6 +181,12 @@ export class FundingService {
         walletId = wallet.walletId;
       }
 
+      await this.transactionService.updateTx(manager, tx.txId, {
+        status: TransactionStatus.COMPLETED,
+        journalId: result.journalId,
+        processedAt: new Date(),
+      });
+
       return manager.getRepository(Funding).save(
         manager.getRepository(Funding).create({
           participantId,
@@ -151,6 +205,7 @@ export class FundingService {
       );
     });
   }
+
   // ======================
   // 🔴 WITHDRAW (ONLY BANK)
   // ======================
@@ -165,6 +220,23 @@ export class FundingService {
       throw new BadRequestException('destinationFinAddress required');
     }
 
+    await this.complianceService.validate(
+      {
+        customerId: dto.customerId,
+        type: ComplianceTxnType.WITHDRAW,
+        amount: dto.amount,
+        currency: dto.currency,
+      },
+      participantId,
+    );
+
+    if (dto.idempotencyKey) {
+      const existing = await this.transactionService.findByExternalId(
+        dto.idempotencyKey,
+      );
+      if (existing) return existing;
+    }
+
     return this.dataSource.transaction(async (manager) => {
       const account = await this.accounts.findByIdForParticipant(
         dto.accountId,
@@ -175,31 +247,63 @@ export class FundingService {
         throw new NotFoundException('Account not found');
       }
 
-      const txId = crypto.randomUUID();
+      let tx = await this.transactionService.createTx(manager, {
+        participantId,
+        channel: TransactionType.CREDIT_TRANSFER,
+        customerId: account.customerId,
+        senderFinAddress: account.finAddress,
+        receiverFinAddress: dto.destinationFinAddress,
+        amount: Number(amount.toFixed(2)),
+        currency: dto.currency,
+        status: TransactionStatus.INITIATED,
+        externalId: dto.idempotencyKey,
+        reference: 'Withdraw',
+      });
+
+      tx = await this.transactionService.updateTx(manager, tx.txId, {
+        status: TransactionStatus.PROCESSING,
+      });
+      const txId = tx.txId;
+
       await this.accounts.assertFinAddressActive(account.finAddress, manager);
 
-      const result = await this.ledger.postTransfer(
-        {
-          txId,
-          participantId,
-          reference: 'Withdraw',
-          postedBy: 'funding',
-          currency: dto.currency, // ✅ FIXED
-          legs: [
-            {
-              finAddress: account.finAddress,
-              amount: amount.toFixed(2),
-              isCredit: false,
-            },
-            {
-              finAddress: dto.destinationFinAddress,
-              amount: amount.toFixed(2),
-              isCredit: true,
-            },
-          ],
-        },
-        manager,
-      );
+      let result;
+      try {
+        result = await this.ledger.postTransfer(
+          {
+            txId,
+            participantId,
+            reference: 'Withdraw',
+            postedBy: 'funding',
+            currency: dto.currency, // ✅ FIXED
+            legs: [
+              {
+                finAddress: account.finAddress,
+                amount: amount.toFixed(2),
+                isCredit: false,
+              },
+              {
+                finAddress: dto.destinationFinAddress,
+                amount: amount.toFixed(2),
+                isCredit: true,
+              },
+            ],
+          },
+          manager,
+        );
+      } catch (error) {
+        await this.transactionService.updateTx(manager, tx.txId, {
+          status: TransactionStatus.FAILED,
+          failureReason: error.message,
+        });
+        throw error;
+      }
+
+      await this.transactionService.updateTx(manager, tx.txId, {
+        status: TransactionStatus.COMPLETED,
+        journalId: result.journalId,
+        processedAt: new Date(),
+      });
 
       return manager.getRepository(Funding).save(
         manager.getRepository(Funding).create({

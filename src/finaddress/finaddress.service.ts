@@ -101,9 +101,7 @@ export class FinaddressService {
     if (!fin) throw new NotFoundException('Financial address not found');
 
     if (fin.isDefault) {
-      throw new BadRequestException(
-        'Cannot delete default financial address',
-      );
+      throw new BadRequestException('Cannot delete default financial address');
     }
 
     return this.finaRepo.delete({ finAddressId });

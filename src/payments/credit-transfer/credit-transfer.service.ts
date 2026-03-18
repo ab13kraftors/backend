@@ -9,7 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import Decimal from 'decimal.js';
 
-import { Transaction } from '../entities/transaction.entity';
+import { Transaction } from '../transaction/entities/transaction.entity';
 import { CreditTransferDto } from './dto/credit-transfer.dto';
 
 import { CasService } from 'src/cas/cas.service';

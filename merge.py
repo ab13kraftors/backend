@@ -3,7 +3,7 @@ import os
 
 # import os
 
-def merge_ts_to_txt(output_file="controllers.ts", src_folder="src"):
+def merge_ts_to_txt(output_file="all.ts", src_folder="src"):
     if not os.path.exists(src_folder):
         print(f"Error: Folder '{src_folder}' not found.")
         return
@@ -12,7 +12,7 @@ def merge_ts_to_txt(output_file="controllers.ts", src_folder="src"):
         for root, dirs, files in os.walk(src_folder):
             for filename in sorted(files):
                 # Filter for .ts files but skip .spec.ts files
-                if filename.endswith(".controller.ts") and not filename.endswith(".spec.ts"):
+                if filename.endswith(".ts") and not filename.endswith(".spec.ts"):
                     file_path = os.path.join(root, filename)
                     
                     try:

@@ -1,9 +1,15 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { LedgerService } from './ledger.service';
 import { LedgerTransferDto } from './dto/ledger-transfer.dto';
 import { LedgerReverseDto } from './dto/ledger-reverse.dto';
+import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { RolesGuard } from 'src/common/guards/auth/roles.guard';
+import { Roles } from 'src/common/decorators/auth/roles.decorator';
+import { Role } from 'src/common/enums/auth.enums';
 
 @Controller('ledger')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(Role.ADMIN)
 export class LedgerController {
   constructor(private readonly ledgerService: LedgerService) {}
 

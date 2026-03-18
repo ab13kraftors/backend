@@ -86,6 +86,9 @@ export class Transaction {
   @Column({ nullable: true })
   failureReason?: string;
 
+  @Column({ type: 'timestamp', nullable: true })
+  processedAt?: Date;
+
   @Column({ nullable: true })
   journalId?: string;
 

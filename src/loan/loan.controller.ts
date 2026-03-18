@@ -38,26 +38,42 @@ export class LoanController {
 
   @Get(':loanId')
   getLoan(
+    @Participant() participantId: string,
     @Param('loanId', ParseUUIDPipe) loanId: string,
     @Req() req: Request & { user: { customerId: string } },
   ) {
-    return this.loanService.getLoanById(loanId, req.user.customerId);
+    return this.loanService.getLoanById(
+      loanId,
+      req.user.customerId,
+      participantId,
+    );
   }
 
   @Get(':loanId/repayments')
   getRepayments(
+    @Participant() participantId: string,
     @Param('loanId', ParseUUIDPipe) loanId: string,
     @Req() req: Request & { user: { customerId: string } },
   ) {
-    return this.loanService.getRepaymentHistory(loanId, req.user.customerId);
+    return this.loanService.getRepaymentHistory(
+      loanId,
+      req.user.customerId,
+      participantId,
+    );
   }
 
   @Post(':loanId/repay')
   repay(
+    @Participant() participantId: string,
     @Param('loanId', ParseUUIDPipe) loanId: string,
     @Body() dto: RepayLoanDto,
     @Req() req: Request & { user: { customerId: string } },
   ) {
-    return this.loanService.repayLoan(req.user.customerId, loanId, dto);
+    return this.loanService.repayLoan(
+      req.user.customerId,
+      loanId,
+      dto,
+      participantId,
+    );
   }
 }

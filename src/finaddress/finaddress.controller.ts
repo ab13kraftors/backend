@@ -61,7 +61,7 @@ export class FinaddressController {
     return this.finService.setDefault(
       participantId,
       customerId,
-      finAddressId,
+      dto.finAddressId,
     );
   }
 
@@ -71,10 +71,6 @@ export class FinaddressController {
     @Param('customerId') customerId: string,
     @Param('finAddressId') finAddressId: string,
   ) {
-    return this.finService.remove(
-      participantId,
-      customerId,
-      finAddressId,
-    );
+    return this.finService.remove(participantId, customerId, finAddressId);
   }
 }

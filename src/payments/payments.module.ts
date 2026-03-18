@@ -3,10 +3,10 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { PaymentsService } from './payments.service';
 
-import { Transaction } from './entities/transaction.entity';
-import { BulkBatch } from './entities/bulk-batch.entity';
-import { BulkItem } from './entities/bulk-item.entity';
-import { RTP } from './entities/rtp.entity';
+import { Transaction } from './transaction/entities/transaction.entity';
+import { BulkBatch } from './bulk/entities/bulk-batch.entity';
+import { BulkItem } from './bulk/entities/bulk-item.entity';
+import { RTP } from './rtp/entities/rtp.entity';
 
 import { CasModule } from 'src/cas/cas.module';
 import { QrModule } from './qr/qr.module';

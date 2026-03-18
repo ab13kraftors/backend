@@ -10,8 +10,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import Decimal from 'decimal.js';
 
-import { RTP } from '../entities/rtp.entity';
-import { Transaction } from '../entities/transaction.entity';
+import { RTP } from './entities/rtp.entity';
+import { Transaction } from '../transaction/entities/transaction.entity';
 import { RtpInitiateDto } from './dto/rtp-initiate.dto';
 import { RespondRtpDto } from './dto/rtp-respond.dto';
 

@@ -1,7 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
-import { Transaction } from '../entities/transaction.entity';
+import { Transaction } from '../transaction/entities/transaction.entity';
 import { CreditTransferService } from './credit-transfer.service';
 import { CreditTransferController } from './credit-transfer.controller';
 

@@ -122,12 +122,12 @@ export class Customer {
   @OneToMany(() => Account, (account) => account.customer)
   accounts: Account[];
 
-  @OneToMany(() => Wallet, (wallet) => wallet.customer)
+  @OneToMany(() => Wallet, (wallet) => wallet.customerId)
   wallets: Wallet;
 
   @OneToMany(
     () => PaymentInstrument,
-    (paymentInstrument) => paymentInstrument.customer,
+    (paymentInstrument) => paymentInstrument.customerId,
   )
   paymentInstruments: PaymentInstrument[];
 

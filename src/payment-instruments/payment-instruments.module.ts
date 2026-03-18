@@ -3,7 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { CardInstrument } from './entities/card.entity';
 import { MobileMoneyInstrument } from './entities/mobile-money.entity';
-import { Transaction } from 'src/payments/entities/transaction.entity';
+import { Transaction } from 'src/payments/transaction/entities/transaction.entity';
 
 import {
   PaymentInstrumentsController,

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -23,6 +24,13 @@ import { WalletService } from '../wallet/wallet.service';
 import { KycService } from '../kyc/kyc.service';
 import { KycTier } from 'src/common/enums/kyc.enums';
 import { SYSTEM_POOL } from 'src/common/constants';
+import { AccountsService } from 'src/accounts/accounts.service';
+import { Transaction } from 'src/payments/transaction/entities/transaction.entity';
+import {
+  Currency,
+  TransactionStatus,
+  TransactionType,
+} from 'src/common/enums/transaction.enums';
 /**
  * SYSTEM_POOL — the internal fin-address that acts as the source of
  * disbursed funds and the sink for repayments.  This account must exist
@@ -41,9 +49,13 @@ export class LoanService {
     @InjectRepository(LoanRepayment)
     private readonly repayRepo: Repository<LoanRepayment>,
 
+    @InjectRepository(Transaction)
+    private readonly txRepo: Repository<Transaction>,
+
     private readonly ledgerService: LedgerService,
     private readonly walletService: WalletService,
     private readonly kycService: KycService,
+    private readonly accountsService: AccountsService,
     private readonly dataSource: DataSource,
   ) {
     Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
@@ -86,8 +98,8 @@ export class LoanService {
       this.loanRepo.create({
         customerId,
         participantId,
-        requestedAmount: amount.toFixed(4),
-        outstandingBalance: amount.toFixed(4),
+        requestedAmount: amount.toFixed(2),
+        outstandingBalance: amount.toFixed(2),
         status: LoanStatus.PENDING,
         purpose: dto.purpose ?? null,
       }),
@@ -98,6 +110,7 @@ export class LoanService {
     customerId: string,
     loanId: string,
     dto: RepayLoanDto,
+    participantId: string,
   ): Promise<LoanRepayment> {
     return this.dataSource.transaction(async (manager) => {
       if (dto.idempotencyKey) {
@@ -108,7 +121,7 @@ export class LoanService {
       }
 
       const loan = await manager.findOne(LoanApplication, {
-        where: { loanId, customerId },
+        where: { loanId, customerId, participantId },
         lock: { mode: 'pessimistic_write' },
       });
 
@@ -131,7 +144,10 @@ export class LoanService {
       );
 
       const balance = new Decimal(
-        await this.ledgerService.getDerivedBalance(wallet.finAddress),
+        await this.ledgerService.getDerivedBalance(
+          wallet.finAddress,
+          participantId,
+        ),
       );
 
       if (balance.lt(repayAmount)) {
@@ -139,6 +155,12 @@ export class LoanService {
       }
 
       const txId = crypto.randomUUID();
+
+      await this.accountsService.assertFinAddressActive(
+        wallet.finAddress,
+        manager,
+      );
+      await this.accountsService.assertFinAddressActive(SYSTEM_POOL, manager);
 
       const result = await this.ledgerService.postTransfer(
         {
@@ -150,12 +172,12 @@ export class LoanService {
           legs: [
             {
               finAddress: wallet.finAddress,
-              amount: repayAmount.toFixed(4),
+              amount: repayAmount.toFixed(2),
               isCredit: false,
             },
             {
               finAddress: SYSTEM_POOL,
-              amount: repayAmount.toFixed(4),
+              amount: repayAmount.toFixed(2),
               isCredit: true,
             },
           ],
@@ -163,10 +185,25 @@ export class LoanService {
         manager,
       );
 
+      await manager.getRepository(Transaction).save(
+        manager.getRepository(Transaction).create({
+          participantId: loan.participantId,
+          channel: TransactionType.CREDIT_TRANSFER,
+          customerId,
+          senderFinAddress: wallet.finAddress,
+          receiverFinAddress: SYSTEM_POOL,
+          amount: Number(repayAmount.toFixed(2)),
+          currency: Currency.SLE,
+          status: TransactionStatus.COMPLETED,
+          reference: `Loan repayment for LoanId:  ${loanId}`,
+          journalId: result.journalId,
+        }),
+      );
+
       const newOutstanding = outstanding.minus(repayAmount);
       const before = loan.outstandingBalance;
 
-      loan.outstandingBalance = newOutstanding.toFixed(4);
+      loan.outstandingBalance = newOutstanding.toFixed(2);
 
       if (newOutstanding.lte(0)) {
         loan.status = LoanStatus.REPAID;
@@ -179,7 +216,7 @@ export class LoanService {
           loanId,
           customerId,
           participantId: loan.participantId,
-          amount: repayAmount.toFixed(4),
+          amount: repayAmount.toFixed(2),
           outstandingBefore: before,
           outstandingAfter: loan.outstandingBalance,
           ledgerJournalId: result.journalId,
@@ -202,7 +239,7 @@ export class LoanService {
     if (due <= new Date()) throw new BadRequestException('Invalid due date');
 
     loan.status = LoanStatus.APPROVED;
-    loan.approvedAmount = new Decimal(dto.approvedAmount).toFixed(4);
+    loan.approvedAmount = new Decimal(dto.approvedAmount).toFixed(2);
     loan.outstandingBalance = loan.approvedAmount;
     loan.dueDate = due;
     loan.reviewedBy = adminId;
@@ -256,12 +293,12 @@ export class LoanService {
           legs: [
             {
               finAddress: SYSTEM_POOL,
-              amount: amount.toFixed(4),
+              amount: amount.toFixed(2),
               isCredit: false,
             },
             {
               finAddress: wallet.finAddress,
-              amount: amount.toFixed(4),
+              amount: amount.toFixed(2),
               isCredit: true,
             },
           ],
@@ -284,9 +321,9 @@ export class LoanService {
     });
   }
 
-  async getLoanById(loanId: string, customerId: string) {
+  async getLoanById(loanId: string, customerId: string, participantId: string) {
     const loan = await this.loanRepo.findOne({
-      where: { loanId, customerId },
+      where: { loanId, customerId, participantId },
     });
 
     if (!loan) throw new NotFoundException();
@@ -294,16 +331,21 @@ export class LoanService {
     return loan;
   }
 
-  async getRepaymentHistory(loanId: string, customerId: string) {
-    await this.getLoanById(loanId, customerId);
+  async getRepaymentHistory(
+    loanId: string,
+    customerId: string,
+    participantId: string,
+  ) {
+    await this.getLoanById(loanId, customerId, participantId);
 
     return this.repayRepo.find({
-      where: { loanId, customerId },
+      where: { loanId, customerId, participantId },
       order: { repaidAt: 'DESC' },
     });
   }
 
   async getAllLoans(status?: LoanStatus, participantId?: string) {
+    if (!participantId) throw new ForbiddenException();
     const where: FindOptionsWhere<LoanApplication> = {};
     if (status) where.status = status;
     if (participantId) where.participantId = participantId;

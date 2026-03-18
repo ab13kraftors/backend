@@ -12,7 +12,7 @@ import * as crypto from 'crypto';
 
 import { Wallet } from './entities/wallet.entity';
 import { WalletLimit } from './entities/wallet-limit.entity';
-import { Transaction } from 'src/payments/entities/transaction.entity';
+import { Transaction } from 'src/payments/transaction/entities/transaction.entity';
 
 import {
   TransactionType,
@@ -34,7 +34,9 @@ import { KycService } from 'src/kyc/kyc.service';
 import { KycTier } from 'src/common/enums/kyc.enums';
 import { SYSTEM_POOL } from 'src/common/constants';
 import { CreateAccountDto } from 'src/accounts/dto/create-account.dto';
-
+import { ComplianceService } from 'src/compliance/compliance.service';
+import { ComplianceTxnType } from 'src/compliance/enums/compliance.enum';
+import { TransactionService } from 'src/payments/transaction/transaction.service';
 @Injectable()
 export class WalletService {
   private readonly SYSTEM_POOL_FIN = SYSTEM_POOL;
@@ -56,6 +58,8 @@ export class WalletService {
     private readonly ledgerService: LedgerService,
     private readonly kycService: KycService,
     private readonly dataSource: DataSource,
+    private readonly complianceService: ComplianceService,
+    private readonly transactionService: TransactionService,
   ) {
     Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
   }
@@ -221,8 +225,29 @@ export class WalletService {
   }
 
   async fundWallet(dto: FundWalletDto, participantId: string) {
+    if (dto.idempotencyKey) {
+      const existing = await this.transactionService.findByExternalId(
+        dto.idempotencyKey,
+        participantId,
+      );
+      if (existing) return existing;
+    }
+
     const wallet = await this.validateActiveWallet(dto.walletId, participantId);
     const walletAccount = await this.resolveWalletAccount(wallet);
+
+    let tx = await this.transactionService.createTx(null, {
+      participantId,
+      channel: TransactionType.CREDIT_TRANSFER,
+      customerId: wallet.customerId,
+      senderFinAddress: dto.sourceFinAddress || this.SYSTEM_POOL_FIN,
+      receiverFinAddress: walletAccount.finAddress,
+      amount: Number(dto.amount),
+      currency: wallet.currency,
+      status: TransactionStatus.INITIATED,
+      externalId: dto.idempotencyKey,
+      reference: 'Wallet Funding',
+    });
 
     await this.kycService.requireTier(
       wallet.customerId,
@@ -239,7 +264,7 @@ export class WalletService {
     const amountStr = amount.toFixed(2);
     const sourceFinAddress =
       dto.sourceFinAddress?.trim() || this.SYSTEM_POOL_FIN;
-    const txId = `WFUND-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    const txId = tx.txId;
 
     return this.dataSource.transaction('SERIALIZABLE', async (manager) => {
       await this.accountsService.assertFinAddressActive(
@@ -251,31 +276,49 @@ export class WalletService {
         manager,
       );
 
-      const transferResult = await this.ledgerService.postTransfer(
-        {
-          txId,
-          idempotencyKey: dto.idempotencyKey,
-          reference: `Wallet funding ${wallet.walletId}`,
-          participantId,
-          postedBy: 'wallet-service',
-          currency: wallet.currency,
-          legs: [
-            {
-              finAddress: sourceFinAddress,
-              amount: amountStr,
-              isCredit: false,
-              memo: `Wallet funding source -> ${wallet.finAddress}`,
-            },
-            {
-              finAddress: walletAccount.finAddress,
-              amount: amountStr,
-              isCredit: true,
-              memo: `Wallet funded from ${sourceFinAddress}`,
-            },
-          ],
-        },
+      tx = await this.transactionService.updateTx(
         manager,
+        tx.txId,
+        participantId,
+        {
+          status: TransactionStatus.PROCESSING,
+        },
       );
+
+      let transferResult;
+      try {
+        transferResult = await this.ledgerService.postTransfer(
+          {
+            txId,
+            idempotencyKey: dto.idempotencyKey,
+            reference: `Wallet funding ${wallet.walletId}`,
+            participantId,
+            postedBy: 'wallet-service',
+            currency: wallet.currency,
+            legs: [
+              {
+                finAddress: sourceFinAddress,
+                amount: amountStr,
+                isCredit: false,
+                memo: `Wallet funding source -> ${wallet.finAddress}`,
+              },
+              {
+                finAddress: walletAccount.finAddress,
+                amount: amountStr,
+                isCredit: true,
+                memo: `Wallet funded from ${sourceFinAddress}`,
+              },
+            ],
+          },
+          manager,
+        );
+      } catch (err) {
+        await this.transactionService.updateTx(manager, tx.txId, {
+          status: TransactionStatus.FAILED,
+          failureReason: err.message,
+        });
+        throw err;
+      }
 
       if (transferResult.status === 'already_processed') {
         const newBalance = await this.ledgerService.getDerivedBalance(
@@ -290,25 +333,16 @@ export class WalletService {
         };
       }
 
-      await manager.getRepository(Transaction).save(
-        manager.getRepository(Transaction).create({
-          participantId,
-          channel: TransactionType.CREDIT_TRANSFER,
-          senderAlias: sourceFinAddress,
-          receiverAlias: wallet.customerId,
-          senderFinAddress: sourceFinAddress,
-          receiverFinAddress: wallet.finAddress,
-          amount: Number(amountStr),
-          currency: wallet.currency,
-          status: TransactionStatus.COMPLETED,
-          reference: `Wallet Funding ${txId}`,
-        }),
-      );
-
       const newBalance = await this.ledgerService.getDerivedBalance(
         wallet.finAddress,
         participantId,
       );
+
+      await this.transactionService.updateTx(manager, tx.txId, {
+        status: TransactionStatus.COMPLETED,
+        journalId: transferResult.journalId,
+        processedAt: new Date(),
+      });
 
       return {
         status: 'success',
@@ -320,8 +354,28 @@ export class WalletService {
   }
 
   async withdrawWallet(dto: WithdrawWalletDto, participantId: string) {
+    if (dto.idempotencyKey) {
+      const existing = await this.transactionService.findByExternalId(
+        dto.idempotencyKey,
+      );
+      if (existing) return existing;
+    }
+
     const wallet = await this.validateActiveWallet(dto.walletId, participantId);
     const walletAccount = await this.resolveWalletAccount(wallet);
+
+    let tx = await this.transactionService.createTx(null, {
+      participantId,
+      channel: TransactionType.CREDIT_TRANSFER,
+      customerId: wallet.customerId,
+      senderFinAddress: dto.sourceFinAddress || this.SYSTEM_POOL_FIN,
+      receiverFinAddress: walletAccount.finAddress,
+      amount: Number(dto.amount),
+      currency: wallet.currency,
+      status: TransactionStatus.INITIATED,
+      externalId: dto.idempotencyKey,
+      reference: 'Wallet Funding',
+    });
 
     await this.kycService.requireTier(
       wallet.customerId,
@@ -338,7 +392,7 @@ export class WalletService {
     const amountStr = amount.toFixed(2);
     const destinationFinAddress =
       dto.destinationFinAddress?.trim() || this.SYSTEM_POOL_FIN;
-    const txId = `WWD-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+    const txId = tx.txId;
 
     return this.dataSource.transaction('SERIALIZABLE', async (manager) => {
       await this.accountsService.assertFinAddressActive(
@@ -348,33 +402,47 @@ export class WalletService {
       await this.accountsService.assertFinAddressActive(
         destinationFinAddress,
         manager,
+        participantId,
       );
 
-      const transferResult = await this.ledgerService.postTransfer(
-        {
-          txId,
-          idempotencyKey: dto.idempotencyKey,
-          reference: `Wallet withdrawal ${wallet.walletId}`,
-          participantId,
-          postedBy: 'wallet-service',
-          currency: wallet.currency,
-          legs: [
-            {
-              finAddress: walletAccount.finAddress,
-              amount: amountStr,
-              isCredit: false,
-              memo: `Wallet withdrawal -> ${destinationFinAddress}`,
-            },
-            {
-              finAddress: destinationFinAddress,
-              amount: amountStr,
-              isCredit: true,
-              memo: `Wallet withdrawal from ${wallet.finAddress}`,
-            },
-          ],
-        },
-        manager,
-      );
+      tx = await this.transactionService.updateTx(manager, tx.txId, {
+        status: TransactionStatus.PROCESSING,
+      });
+
+      let transferResult;
+      try {
+        transferResult = await this.ledgerService.postTransfer(
+          {
+            txId,
+            idempotencyKey: dto.idempotencyKey,
+            reference: `Wallet withdrawal ${wallet.walletId}`,
+            participantId,
+            postedBy: 'wallet-service',
+            currency: wallet.currency,
+            legs: [
+              {
+                finAddress: walletAccount.finAddress,
+                amount: amountStr,
+                isCredit: false,
+                memo: `Wallet withdrawal -> ${destinationFinAddress}`,
+              },
+              {
+                finAddress: destinationFinAddress,
+                amount: amountStr,
+                isCredit: true,
+                memo: `Wallet withdrawal from ${wallet.finAddress}`,
+              },
+            ],
+          },
+          manager,
+        );
+      } catch (err) {
+        await this.transactionService.updateTx(manager, tx.txId, {
+          status: TransactionStatus.FAILED,
+          failureReason: err.message,
+        });
+        throw err;
+      }
 
       if (transferResult.status === 'already_processed') {
         const newBalance = await this.ledgerService.getDerivedBalance(
@@ -409,6 +477,12 @@ export class WalletService {
         participantId,
       );
 
+      await this.transactionService.updateTx(manager, tx.txId, {
+        status: TransactionStatus.COMPLETED,
+        journalId: transferResult.journalId,
+        processedAt: new Date(),
+      });
+
       return {
         status: 'success',
         journalId: transferResult.journalId,
@@ -419,8 +493,25 @@ export class WalletService {
   }
 
   async transferWallet(dto: TransferWalletDto, participantId: string) {
+    if (dto.idempotencyKey) {
+      const existing = await this.transactionService.findByExternalId(
+        dto.idempotencyKey,
+      );
+      if (existing) return existing;
+    }
+
     const sender = await this.validateActiveWallet(
       dto.senderWalletId,
+      participantId,
+    );
+
+    await this.complianceService.validate(
+      {
+        customerId: sender.customerId,
+        type: ComplianceTxnType.TRANSFER,
+        amount: dto.amount,
+        currency: sender.currency,
+      },
       participantId,
     );
     const receiver = await this.getWalletByFinAddress(dto.receiverFinAddress);
@@ -454,9 +545,40 @@ export class WalletService {
     }
 
     const amountStr = amount.toFixed(2);
-    const txId = `WTRF-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+
+    let tx = await this.transactionService.createTx(null, {
+      participantId,
+      channel: TransactionType.CREDIT_TRANSFER,
+
+      customerId: sender.customerId,
+
+      senderAlias: sender.customerId,
+      receiverAlias: receiver.customerId,
+
+      senderFinAddress: senderAccount.finAddress,
+      receiverFinAddress: receiverAccount.finAddress,
+
+      sourceType: 'WALLET',
+      sourceWalletId: sender.walletId,
+
+      destinationType: 'WALLET',
+      destinationWalletId: receiver.walletId,
+
+      amount: Number(amountStr),
+      currency: sender.currency,
+
+      status: TransactionStatus.INITIATED,
+      externalId: dto.idempotencyKey,
+      reference: 'Wallet Transfer',
+    });
+
+    const txId = tx.txId;
 
     return this.dataSource.transaction('SERIALIZABLE', async (manager) => {
+      tx = await this.transactionService.updateTx(manager, tx.txId, {
+        status: TransactionStatus.PROCESSING,
+      });
+
       await this.accountsService.assertFinAddressActive(
         senderAccount.finAddress,
         manager,
@@ -506,31 +628,40 @@ export class WalletService {
         }
       }
 
-      const transferResult = await this.ledgerService.postTransfer(
-        {
-          txId,
-          idempotencyKey: dto.idempotencyKey,
-          reference: `Wallet to wallet ${txId}`,
-          participantId,
-          postedBy: 'wallet-service',
-          currency: sender.currency,
-          legs: [
-            {
-              finAddress: senderAccount.finAddress,
-              amount: amountStr,
-              isCredit: false,
-              memo: `Wallet transfer to ${receiver.finAddress}`,
-            },
-            {
-              finAddress: receiverAccount.finAddress,
-              amount: amountStr,
-              isCredit: true,
-              memo: `Wallet transfer from ${sender.finAddress}`,
-            },
-          ],
-        },
-        manager,
-      );
+      let transferResult;
+      try {
+        transferResult = await this.ledgerService.postTransfer(
+          {
+            txId,
+            idempotencyKey: dto.idempotencyKey,
+            reference: `Wallet to wallet ${txId}`,
+            participantId,
+            postedBy: 'wallet-service',
+            currency: sender.currency,
+            legs: [
+              {
+                finAddress: senderAccount.finAddress,
+                amount: amountStr,
+                isCredit: false,
+                memo: `Wallet transfer to ${receiver.finAddress}`,
+              },
+              {
+                finAddress: receiverAccount.finAddress,
+                amount: amountStr,
+                isCredit: true,
+                memo: `Wallet transfer from ${sender.finAddress}`,
+              },
+            ],
+          },
+          manager,
+        );
+      } catch (err) {
+        await this.transactionService.updateTx(manager, tx.txId, {
+          status: TransactionStatus.FAILED,
+          failureReason: err?.message || 'TRANSFER_FAILED',
+        });
+        throw err;
+      }
 
       if (transferResult.status === 'already_processed') {
         const senderNewBalance = await this.ledgerService.getDerivedBalance(
@@ -546,20 +677,11 @@ export class WalletService {
         };
       }
 
-      await manager.getRepository(Transaction).save(
-        manager.getRepository(Transaction).create({
-          participantId,
-          channel: TransactionType.CREDIT_TRANSFER,
-          senderAlias: sender.customerId,
-          receiverAlias: receiver.customerId,
-          senderFinAddress: sender.finAddress,
-          receiverFinAddress: receiver.finAddress,
-          amount: Number(amountStr),
-          currency: sender.currency,
-          status: TransactionStatus.COMPLETED,
-          reference: `Wallet P2P ${txId}`,
-        }),
-      );
+      await this.transactionService.updateTx(manager, tx.txId, {
+        status: TransactionStatus.COMPLETED,
+        journalId: transferResult.journalId,
+        processedAt: new Date(),
+      });
 
       const senderNewBalance = await this.ledgerService.getDerivedBalance(
         senderAccount.finAddress,

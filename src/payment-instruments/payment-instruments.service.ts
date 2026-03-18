@@ -23,7 +23,7 @@ import { CashInMobileMoneyDto } from './dto/cashin-mobile-money.dto';
 import { WalletService } from 'src/wallet/wallet.service';
 import { AccountsService } from 'src/accounts/accounts.service';
 import { LedgerService } from 'src/ledger/ledger.service';
-import { Transaction } from 'src/payments/entities/transaction.entity';
+import { Transaction } from 'src/payments/transaction/entities/transaction.entity';
 import {
   Currency,
   TransactionStatus,

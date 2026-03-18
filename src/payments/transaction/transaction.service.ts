@@ -1,12 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Transaction } from '../entities/transaction.entity';
-import { Repository } from 'typeorm';
+import { Transaction } from './entities/transaction.entity';
+import { EntityManager, Repository } from 'typeorm';
 import {
   Currency,
   TransactionStatus,
   TransactionType,
 } from 'src/common/enums/transaction.enums';
+import { Cron } from '@nestjs/schedule';
 
 type FindAllParams = {
   participantId: string;
@@ -25,6 +26,71 @@ export class TransactionService {
     @InjectRepository(Transaction)
     private readonly txRepo: Repository<Transaction>,
   ) {}
+
+  async createTx(manager, data: Partial<Transaction>) {
+    const repo = manager ? manager.getRepository(Transaction) : this.txRepo;
+    return repo.save(repo.create(data));
+  }
+
+  async updateTx(
+    manager: EntityManager,
+    txId: string,
+    participantId: string,
+    updates: Partial<Transaction>,
+  ) {
+    const repo = manager ? manager.getRepository(Transaction) : this.txRepo;
+    const tx = await repo.findOne({ where: { txId, participantId } });
+
+    if (!tx) throw new NotFoundException('Transaction not found');
+
+    Object.assign(tx, updates);
+
+    if (updates.status === TransactionStatus.COMPLETED) {
+      tx.processedAt = new Date();
+    }
+
+    return repo.save(tx);
+  }
+
+  async findByExternalId(externalId: string, participantId: string) {
+    return this.txRepo.findOne({
+      where: { externalId, participantId },
+    });
+  }
+
+  async fixStuckTransactions() {
+    const timeout = new Date(Date.now() - 5 * 60 * 1000); // 5 min
+
+    const stuck = await this.txRepo.find({
+      where: { status: TransactionStatus.PROCESSING },
+    });
+
+    for (const tx of stuck) {
+      if (!tx.journalId && tx.createdAt < timeout) {
+        tx.status = TransactionStatus.FAILED;
+        tx.failureReason = 'Timeout Incomplete Transaction';
+        tx.processedAt = new Date();
+        await this.txRepo.save(tx);
+      }
+    }
+  }
+
+  @Cron('*/2 * * * *') // every 2 minutes
+  async handleStuckTxCron() {
+    await this.fixStuckTransactions();
+  }
+
+  async findOne(participantId: string, txId: string) {
+    const tx = await this.txRepo.findOne({
+      where: { txId, participantId },
+    });
+
+    if (!tx) {
+      throw new NotFoundException(`Transaction ${txId} does not exist.`);
+    }
+
+    return tx;
+  }
 
   async findAll(params: FindAllParams) {
     const {
@@ -78,17 +144,5 @@ export class TransactionService {
       totalPages: Math.ceil(total / pageSize),
       data,
     };
-  }
-
-  async findOne(participantId: string, txId: string) {
-    const tx = await this.txRepo.findOne({
-      where: { txId, participantId },
-    });
-
-    if (!tx) {
-      throw new NotFoundException(`Transaction ${txId} does not exist.`);
-    }
-
-    return tx;
   }
 }

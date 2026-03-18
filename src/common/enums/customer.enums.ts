@@ -6,6 +6,7 @@ export enum CustomerType {
 export enum CustomerStatus {
   ACTIVE = 'ACTIVE',
   INACTIVE = 'INACTIVE',
+  BLOCKED = 'BLOCKED',
 }
 
 export enum Gender {
